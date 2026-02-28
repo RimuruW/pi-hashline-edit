@@ -1,4 +1,4 @@
-Surgically edit files with hash-verified line references (anchors). Use the `LINE:HASH` strings from the latest `read` or `grep` output to specify exactly where to make changes.
+Surgically edit files with hash-verified line references (anchors). Use the `LINE#HASH` strings from the latest `read` or `grep` output to specify exactly where to make changes.
 
 - path: File path
 - edits: Array of operations:
@@ -8,7 +8,7 @@ Surgically edit files with hash-verified line references (anchors). Use the `LIN
   - { replace: { old_text, new_text, all? } }       // Global string replace (fallback)
 
 Rules:
-- Anchors (`LINE:HASH`) must be copied exactly from `read`/`grep` output.
+- Anchors (`LINE#HASH`) must be copied exactly from `read`/`grep` output.
 - `new_text` is plain content (no hashes, no diff `+` markers).
 - If a hash mismatch occurs (indicated by `>>>`), re-read the file to sync.
 - Operations are validated and applied bottom-up atomically.

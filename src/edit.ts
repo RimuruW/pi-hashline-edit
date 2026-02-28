@@ -164,7 +164,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
 						anchorResult.noopEdits
 							.map(
 								(e) =>
-									`Edit ${e.editIndex}: replacement for ${e.loc} is identical to current content:\n  ${e.loc}| ${e.currentContent}`,
+									`Edit ${e.editIndex}: replacement for ${e.loc} is identical to current content:\n  ${e.loc}: ${e.currentContent}`,
 							)
 							.join("\n");
 					diagnostic += "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
@@ -184,7 +184,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
 								if (parsed.line >= 1 && parsed.line <= lines.length) {
 									const lineContent = lines[parsed.line - 1];
 									const hash = computeLineHash(parsed.line, lineContent);
-									targetLines.push(`${parsed.line}:${hash}|${lineContent}`);
+									targetLines.push(`${parsed.line}#${hash}:${lineContent}`);
 								}
 							} catch {
 								/* skip malformed refs */

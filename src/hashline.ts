@@ -41,12 +41,25 @@ interface NoopEdit {
 
 // ─── Hash computation ───────────────────────────────────────────────────
 
-const HASH_LEN = 2;
-const RADIX = 16;
-const HASH_MOD = RADIX ** HASH_LEN;
-const DICT = Array.from({ length: HASH_MOD }, (_, i) => i.toString(RADIX).padStart(HASH_LEN, "0"));
+/**
+ * Custom 16-character hash alphabet. Deliberately excludes:
+ * - Hex digits A–F (prevents confusion with hex literals in code)
+ * - Visually confusable letters: D, G, I, L, O (look like digits 0, 6, 1, 1, 0)
+ * - Common vowels A, E, I, O, U (prevents accidental English words)
+ *
+ * This makes hash references like "5#MQ" unambiguous — they can never be
+ * mistaken for code content, hex literals, or natural language.
+ */
+const NIBBLE_STR = "ZPMQVRWSNKTXJBYH";
 
-const HASHLINE_PREFIX_RE = /^\d+:[0-9a-zA-Z]{1,16}\|/;
+const DICT = Array.from({ length: 256 }, (_, i) => {
+	const h = i >>> 4;
+	const l = i & 0x0f;
+	return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
+});
+
+/** Pattern matching hashline display format prefixes: `LINE#ID:CONTENT` and `#ID:CONTENT` */
+const HASHLINE_PREFIX_RE = /^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#)\s*[ZPMQVRWSNKTXJBYH]{1,16}:/;
 const DIFF_PLUS_RE = /^\+(?!\+)/;
 const HASH_RELOCATION_WINDOW = 20;
 
@@ -66,16 +79,17 @@ export function computeLineHash(idx: number, line: string): string {
 	if (!RE_SIGNIFICANT.test(line)) {
 		seed = idx;
 	}
-	return DICT[xxh32(line, seed) % HASH_MOD];
+	return DICT[xxh32(line, seed) & 0xff];
 }
 
 // ─── Parsing ────────────────────────────────────────────────────────────
 
 export function parseLineRef(ref: string): { line: number; hash: string } {
-	const cleaned = ref.replace(/\|.*$/, "").replace(/ {2}.*$/, "").trim();
-	const normalized = cleaned.replace(/\s*:\s*/, ":");
-	const match = normalized.match(new RegExp(`^(\\d+):([0-9a-fA-F]{${HASH_LEN}})$`));
-	if (!match) throw new Error(`Invalid line reference "${ref}". Expected "LINE:HASH" (e.g. "5:ab").`);
+	// Match LINE#HASH format, tolerating:
+	//  - leading ">+" and whitespace (from mismatch/diff display)
+	//  - optional trailing display suffix (":..." content)
+	const match = ref.match(/^\s*[>+-]*\s*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})/);
+	if (!match) throw new Error(`Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`);
 	const line = Number.parseInt(match[1], 10);
 	if (line < 1) throw new Error(`Line number must be >= 1, got ${line} in "${ref}".`);
 	return { line, hash: match[2] };
@@ -96,7 +110,7 @@ function formatMismatchError(mismatches: HashMismatch[], fileLines: string[]): s
 
 	const sorted = [...displayLines].sort((a, b) => a - b);
 	const out: string[] = [
-		`${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Auto-relocation checks only within ±${HASH_RELOCATION_WINDOW} lines of each anchor. Use the updated LINE:HASH references shown below (>>> marks changed lines).`,
+		`${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Auto-relocation checks only within ±${HASH_RELOCATION_WINDOW} lines of each anchor. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
 		"",
 	];
 
@@ -106,8 +120,8 @@ function formatMismatchError(mismatches: HashMismatch[], fileLines: string[]): s
 		prev = num;
 		const content = fileLines[num - 1];
 		const hash = computeLineHash(num, content);
-		const prefix = `${num}:${hash}`;
-		out.push(mismatchSet.has(num) ? `>>> ${prefix}|${content}` : `    ${prefix}|${content}`);
+		const prefix = `${num}#${hash}`;
+		out.push(mismatchSet.has(num) ? `>>> ${prefix}:${content}` : `    ${prefix}:${content}`);
 	}
 
 	return out.join("\n");
@@ -238,7 +252,7 @@ export function applyHashlineEdits(
 	function validate(ref: ParsedRef): boolean {
 		if (ref.line < 1 || ref.line > fileLines.length)
 			throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
-		const expected = ref.hash.toLowerCase();
+		const expected = ref.hash;
 		const originalLine = ref.line;
 		const actual = lineHashes[originalLine - 1];
 		if (actual === expected) return true;
@@ -246,7 +260,7 @@ export function applyHashlineEdits(
 		if (relocated !== undefined) {
 			ref.line = relocated;
 			relocationNotes.add(
-				`Auto-relocated anchor ${originalLine}:${ref.hash} -> ${relocated}:${ref.hash} (window ±${HASH_RELOCATION_WINDOW}).`,
+				`Auto-relocated anchor ${originalLine}#${ref.hash} -> ${relocated}#${ref.hash} (window ±${HASH_RELOCATION_WINDOW}).`,
 			);
 			return true;
 		}
@@ -333,7 +347,7 @@ export function applyHashlineEdits(
 			// Noop check: compare dstLines directly against original before any normalization.
 			// This prevents heuristics from normalizing a legitimate edit back to original content.
 			if (orig.length === dstLines.length && orig.every((line, i) => line === dstLines[i])) {
-				noopEdits.push({ editIndex: idx, loc: `${spec.ref.line}:${spec.ref.hash}`, currentContent: orig.join("\n") });
+				noopEdits.push({ editIndex: idx, loc: `${spec.ref.line}#${spec.ref.hash}`, currentContent: orig.join("\n") });
 				continue;
 			}
 
@@ -345,7 +359,7 @@ export function applyHashlineEdits(
 
 			// Noop check: compare dstLines directly against original before any normalization.
 			if (orig.length === dstLines.length && orig.every((line, i) => line === dstLines[i])) {
-				noopEdits.push({ editIndex: idx, loc: `${spec.start.line}:${spec.start.hash}`, currentContent: orig.join("\n") });
+				noopEdits.push({ editIndex: idx, loc: `${spec.start.line}#${spec.start.hash}`, currentContent: orig.join("\n") });
 				continue;
 			}
 
@@ -367,7 +381,7 @@ export function applyHashlineEdits(
 				) {
 					newL = newL.slice(0, -1);
 					warnings.push(
-						`Auto-corrected range replace ${spec.start.line}:${spec.start.hash}-${spec.end.line}:${spec.end.hash}: removed trailing replacement line "${trailingLine.trim()}" that duplicated next surviving line`,
+						`Auto-corrected range replace ${spec.start.line}#${spec.start.hash}-${spec.end.line}#${spec.end.hash}: removed trailing replacement line "${trailingLine.trim()}" that duplicated next surviving line`,
 					);
 				}
 			}
@@ -375,7 +389,7 @@ export function applyHashlineEdits(
 			track(spec.start.line);
 		} else {
 			if (!dstLines.length) {
-				noopEdits.push({ editIndex: idx, loc: `${spec.after.line}:${spec.after.hash}`, currentContent: origLines[spec.after.line - 1] });
+				noopEdits.push({ editIndex: idx, loc: `${spec.after.line}#${spec.after.hash}`, currentContent: origLines[spec.after.line - 1] });
 				continue;
 			}
 			fileLines.splice(spec.after.line, 0, ...dstLines);
