@@ -52,14 +52,23 @@ const DIFF_PLUS_RE = /^\+(?!\+)/;
 const CONFUSABLE_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2212\uFE63\uFF0D]/g;
 const HASH_RELOCATION_WINDOW = 20;
 
-function xxh32(input: string): number {
-	return XXH.h32(0).update(input).digest().toNumber() >>> 0;
+/** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
+const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
+
+function xxh32(input: string, seed = 0): number {
+	return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
 }
 
-export function computeLineHash(_idx: number, line: string): string {
+export function computeLineHash(idx: number, line: string): string {
 	if (line.endsWith("\r")) line = line.slice(0, -1);
 	line = line.replace(/\s+/g, "");
-	return DICT[xxh32(line) % HASH_MOD];
+	// Mix in the line number for non-significant lines (e.g. "}", "---", blank)
+	// to reduce hash collisions on structural/separator lines.
+	let seed = 0;
+	if (!RE_SIGNIFICANT.test(line)) {
+		seed = idx;
+	}
+	return DICT[xxh32(line, seed) % HASH_MOD];
 }
 
 // ─── Parsing ────────────────────────────────────────────────────────────
