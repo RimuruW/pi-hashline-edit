@@ -34,6 +34,32 @@ const hashlineEditSchema = Type.Object(
 
 type HashlineParams = Static<typeof hashlineEditSchema>;
 
+/**
+ * Validates that an edit item contains exactly one valid variant key
+ * and doesn't contain legacy or mismatched keys.
+ */
+export function validateHashlineEditItem(e: Record<string, unknown>, index: number): void {
+	if (("old_text" in e || "new_text" in e) && !("replace" in e)) {
+		throw new Error(
+			`edits[${index}] has top-level 'old_text'/'new_text'. Use {replace: {old_text, new_text}} or {set_line}, {replace_lines}, {insert_after}.`,
+		);
+	}
+	if ("diff" in e) {
+		throw new Error(
+			`edits[${index}] contains 'diff' from patch mode. Hashline edit expects one of: {set_line}, {replace_lines}, {insert_after}, {replace}.`,
+		);
+	}
+	const variantCount =
+		Number("set_line" in e) + Number("replace_lines" in e) + Number("insert_after" in e) + Number("replace" in e);
+	if (variantCount !== 1) {
+		throw new Error(
+			`edits[${index}] must contain exactly one of: 'set_line', 'replace_lines', 'insert_after', 'replace'. Got: [${Object.keys(
+				e,
+			).join(", ")}].`,
+		);
+	}
+}
+
 const EDIT_DESC = readFileSync(new URL("../prompts/edit.md", import.meta.url), "utf-8").trim();
 
 // ─── Registration ───────────────────────────────────────────────────────
@@ -100,27 +126,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			// Validate edit variant keys
 			for (let i = 0; i < edits.length; i++) {
 				throwIfAborted(signal);
-				const e = edits[i] as Record<string, unknown>;
-				if (("old_text" in e || "new_text" in e) && !("replace" in e)) {
-					throw new Error(
-						`edits[${i}] has top-level 'old_text'/'new_text'. Use {replace: {old_text, new_text}} or {set_line}, {replace_lines}, {insert_after}.`,
-					);
-				}
-				if ("diff" in e) {
-					throw new Error(
-						`edits[${i}] contains 'diff' from patch mode. Hashline edit expects one of: {set_line}, {replace_lines}, {insert_after}, {replace}.`,
-					);
-				}
-				const variantCount =
-					Number("set_line" in e) +
-					Number("replace_lines" in e) +
-					Number("insert_after" in e) +
-					Number("replace" in e);
-				if (variantCount !== 1) {
-					throw new Error(
-						`edits[${i}] must contain exactly one of: 'set_line', 'replace_lines', 'insert_after', 'replace'. Got: [${Object.keys(e).join(", ")}].`,
-					);
-				}
+				validateHashlineEditItem(edits[i] as Record<string, unknown>, i);
 			}
 
 			const anchorEdits = edits.filter(
