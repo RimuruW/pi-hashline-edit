@@ -4,7 +4,7 @@
  * Overrides built-in `read`, `grep`, and `edit` tools with hashline workflow:
  * - `read` outputs lines as `LINE#HASH:content`
  * - `grep` outputs matched lines with `LINE#HASH` anchors
- * - `edit` accepts hash-verified anchors (`set_line`, `replace_lines`, `insert_after`, `replace`)
+ * - `edit` accepts `{ op, pos, end, lines }` edits with hash-verified anchors
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
