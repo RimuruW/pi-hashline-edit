@@ -79,7 +79,7 @@ export function registerReadTool(pi: ExtensionAPI): void {
 			const formatted = selected
 				.map((line, i) => {
 					const num = startLine + i;
-					return `${num}:${computeLineHash(num, line)}|${line}`;
+					return `${num}#${computeLineHash(num, line)}:${line}`;
 				})
 				.join("\n");
 
