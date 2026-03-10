@@ -8,6 +8,7 @@ import { dirname } from "path";
 import { detectLineEnding, generateDiffString, normalizeToLF, replaceText, restoreLineEndings, stripBom } from "./edit-diff";
 import {
 	applyHashlineEdits,
+	buildCompactHashlineDiffPreview,
 	computeLineHash,
 	hashlineParseText,
 	parseLineRef,
@@ -209,8 +210,11 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			const warn = warnings.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
 
 			const resultText = move ? `Moved ${path} to ${move}` : `Updated ${path}`;
+			const preview = buildCompactHashlineDiffPreview(diffResult.diff);
+			const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}`;
+			const previewBlock = preview.preview ? `\n\nDiff preview:\n${preview.preview}` : "";
 			return {
-				content: [{ type: "text", text: `${resultText}${warn}` }],
+				content: [{ type: "text", text: `${resultText}\n${summaryLine}${previewBlock}${warn}` }],
 				details: {
 					diff: diffResult.diff,
 					firstChangedLine: anchorResult.firstChangedLine ?? diffResult.firstChangedLine,

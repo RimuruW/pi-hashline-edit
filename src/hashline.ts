@@ -228,6 +228,45 @@ function shouldAutocorrect(line: string, otherLine: string): boolean {
 	}
 	return true;
 }
+
+function isEscapedTabAutocorrectEnabled(): boolean {
+	const value = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+	if (value === "0") return false;
+	return true;
+}
+
+function maybeAutocorrectEscapedTabIndentation(edits: HashlineEdit[], warnings: string[]): void {
+	if (!isEscapedTabAutocorrectEnabled()) return;
+	for (const edit of edits) {
+		if (edit.lines.length === 0) continue;
+		const hasEscapedTabs = edit.lines.some(line => line.includes("\\t"));
+		if (!hasEscapedTabs) continue;
+		const hasRealTabs = edit.lines.some(line => line.includes("\t"));
+		if (hasRealTabs) continue;
+		let correctedCount = 0;
+		const corrected = edit.lines.map(line =>
+			line.replace(/^((?:\\t)+)/, escaped => {
+				correctedCount += escaped.length / 2;
+				return "\t".repeat(escaped.length / 2);
+			}),
+		);
+		if (correctedCount === 0) continue;
+		edit.lines = corrected;
+		warnings.push(
+			`Auto-corrected escaped tab indentation in edit: converted leading \\t sequence(s) to real tab characters`,
+		);
+	}
+}
+
+function maybeWarnSuspiciousUnicodeEscapePlaceholder(edits: HashlineEdit[], warnings: string[]): void {
+	for (const edit of edits) {
+		if (edit.lines.length === 0) continue;
+		if (!edit.lines.some(line => /\\uDDDD/i.test(line))) continue;
+		warnings.push(
+			`Detected literal \\uDDDD in edit content; no autocorrection applied. Verify whether this should be a real Unicode escape or plain text.`,
+		);
+	}
+}
 export function applyHashlineEdits(
 	content: string,
 	edits: HashlineEdit[],
@@ -347,6 +386,10 @@ export function applyHashlineEdits(
 		}
 	}
 	if (mismatches.length) throw new Error(formatMismatchError(mismatches, fileLines));
+
+	// Auto-correct escaped tab indentation and warn on suspicious Unicode escapes
+	maybeAutocorrectEscapedTabIndentation(edits, warnings);
+	maybeWarnSuspiciousUnicodeEscapePlaceholder(edits, warnings);
 
 	// Deduplicate identical edits
 	const seenEditKeys = new Map<string, number>();
@@ -560,4 +603,121 @@ export function applyHashlineEdits(
 			firstChanged = line;
 		}
 	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Compact Diff Preview
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface CompactHashlineDiffPreview {
+	preview: string;
+	addedLines: number;
+	removedLines: number;
+}
+
+export interface CompactHashlineDiffOptions {
+	maxUnchangedRun?: number;
+	maxAdditionRun?: number;
+	maxDeletionRun?: number;
+	maxOutputLines?: number;
+}
+
+const NUMBERED_DIFF_LINE_RE = /^([ +-])(\d+)\|(.*)$/;
+
+type DiffRunKind = " " | "+" | "-" | "meta";
+type DiffRun = { kind: DiffRunKind; lines: string[] };
+
+function collapseFromStart(lines: string[], maxLines: number, label: string): string[] {
+	if (lines.length <= maxLines) return lines;
+	const hidden = lines.length - maxLines;
+	return [...lines.slice(0, maxLines), ` ... ${hidden} more ${label} lines`];
+}
+
+function collapseFromEnd(lines: string[], maxLines: number, label: string): string[] {
+	if (lines.length <= maxLines) return lines;
+	const hidden = lines.length - maxLines;
+	return [` ... ${hidden} more ${label} lines`, ...lines.slice(-maxLines)];
+}
+
+function collapseFromMiddle(lines: string[], maxLines: number, label: string): string[] {
+	if (lines.length <= maxLines * 2) return lines;
+	const hidden = lines.length - maxLines * 2;
+	return [...lines.slice(0, maxLines), ` ... ${hidden} more ${label} lines`, ...lines.slice(-maxLines)];
+}
+
+function splitDiffRuns(lines: string[]): DiffRun[] {
+	const runs: DiffRun[] = [];
+	for (const line of lines) {
+		const match = NUMBERED_DIFF_LINE_RE.exec(line);
+		const kind = (match?.[1] as " " | "+" | "-" | undefined) ?? "meta";
+		const prev = runs[runs.length - 1];
+		if (prev && prev.kind === kind) {
+			prev.lines.push(line);
+			continue;
+		}
+		runs.push({ kind, lines: [line] });
+	}
+	return runs;
+}
+
+/**
+ * Build a compact diff preview suitable for model-visible tool responses.
+ *
+ * Collapses long unchanged runs and long consecutive additions/removals so the
+ * model sees the shape of edits without replaying full file content.
+ */
+export function buildCompactHashlineDiffPreview(
+	diff: string,
+	options: CompactHashlineDiffOptions = {},
+): CompactHashlineDiffPreview {
+	const maxUnchangedRun = options.maxUnchangedRun ?? 2;
+	const maxAdditionRun = options.maxAdditionRun ?? 2;
+	const maxDeletionRun = options.maxDeletionRun ?? 2;
+	const maxOutputLines = options.maxOutputLines ?? 16;
+
+	const inputLines = diff.length === 0 ? [] : diff.split("\n");
+	const runs = splitDiffRuns(inputLines);
+
+	const out: string[] = [];
+	let addedLines = 0;
+	let removedLines = 0;
+
+	for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+		const run = runs[runIndex];
+		switch (run.kind) {
+			case "meta":
+				out.push(...run.lines);
+				break;
+			case "+":
+				addedLines += run.lines.length;
+				out.push(...collapseFromStart(run.lines, maxAdditionRun, "added"));
+				break;
+			case "-":
+				removedLines += run.lines.length;
+				out.push(...collapseFromStart(run.lines, maxDeletionRun, "removed"));
+				break;
+			case " ":
+				if (runIndex === 0) {
+					out.push(...collapseFromEnd(run.lines, maxUnchangedRun, "unchanged"));
+					break;
+				}
+				if (runIndex === runs.length - 1) {
+					out.push(...collapseFromStart(run.lines, maxUnchangedRun, "unchanged"));
+					break;
+				}
+				out.push(...collapseFromMiddle(run.lines, maxUnchangedRun, "unchanged"));
+				break;
+		}
+	}
+
+	if (out.length > maxOutputLines) {
+		const hidden = out.length - maxOutputLines;
+		return {
+			preview: [...out.slice(0, maxOutputLines), ` ... ${hidden} more preview lines`].join("\n"),
+			addedLines,
+			removedLines,
+		};
+	}
+
+	return { preview: out.join("\n"), addedLines, removedLines };
 }
