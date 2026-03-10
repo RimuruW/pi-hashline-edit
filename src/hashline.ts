@@ -177,8 +177,11 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 		const tag = edit.pos ? parseLineRef(edit.pos) : undefined;
 		const end = edit.end ? parseLineRef(edit.end) : undefined;
 
-		// Normalize op — default unknown values to "replace"
-		const op = edit.op === "append" || edit.op === "prepend" ? edit.op : "replace";
+		// Validate op
+		const op = edit.op ?? "replace";
+		if (op !== "replace" && op !== "append" && op !== "prepend") {
+			throw new Error(`Unknown edit op "${op}". Expected "replace", "append", or "prepend".`);
+		}
 		switch (op) {
 			case "replace": {
 				if (tag && end) {

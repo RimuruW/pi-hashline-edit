@@ -103,42 +103,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
 					details: { diff: "", firstChangedLine: undefined } as EditToolDetails,
 				};
 			}
-			// ── Legacy input normalization ──
-			const legacyOldText =
-				typeof input.oldText === "string"
-					? input.oldText
-					: typeof input.old_text === "string"
-						? input.old_text
-						: undefined;
-			const legacyNewText =
-				typeof input.newText === "string"
-					? input.newText
-					: typeof input.new_text === "string"
-						? input.new_text
-						: undefined;
-			const hasLegacyInput = legacyOldText !== undefined || legacyNewText !== undefined;
-			const hasEditsInput = Array.isArray(parsed.edits);
-
 			let toolEdits: HashlineToolEdit[] = (parsed.edits ?? []) as HashlineToolEdit[];
 			let textReplaceEdits = parsed.text_replace ?? [];
-			let legacyNormalizationWarning: string | undefined;
-
-			if (!hasEditsInput && hasLegacyInput) {
-				if (legacyOldText === undefined || legacyNewText === undefined) {
-					throw new Error(
-						"Legacy edit input requires both oldText/newText (or old_text/new_text) when 'edits' is omitted.",
-					);
-				}
-				textReplaceEdits = [
-					{
-						old_text: legacyOldText,
-						new_text: legacyNewText,
-						...(typeof input.all === "boolean" ? { all: input.all } : {}),
-					},
-				];
-				legacyNormalizationWarning =
-					"Legacy top-level oldText/newText input was normalized to text_replace. Prefer the edits[] format.";
-			}
 
 			if (!toolEdits.length && !textReplaceEdits.length && !move) {
 				return {
@@ -240,7 +206,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			const diffResult = generateDiffString(originalNormalized, result);
 			const warnings: string[] = [];
 			if (anchorResult.warnings?.length) warnings.push(...anchorResult.warnings);
-			if (legacyNormalizationWarning) warnings.push(legacyNormalizationWarning);
 			const warn = warnings.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
 
 			const resultText = move ? `Moved ${path} to ${move}` : `Updated ${path}`;

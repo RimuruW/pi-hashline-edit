@@ -283,8 +283,13 @@ describe("resolveEditAnchors", () => {
 		expect(resolved[0].lines).toEqual([]);
 	});
 
-	it("defaults unknown ops to replace", () => {
+	it("throws on unknown op", () => {
 		const edits: HashlineToolEdit[] = [{ op: "something_weird", pos: "1#ZZ", lines: ["x"] }];
+		expect(() => resolveEditAnchors(edits)).toThrow('Unknown edit op "something_weird"');
+	});
+
+	it("defaults missing op to replace", () => {
+		const edits: HashlineToolEdit[] = [{ pos: "1#ZZ", lines: ["x"] } as any];
 		const resolved = resolveEditAnchors(edits);
 		expect(resolved[0].op).toBe("replace");
 	});
