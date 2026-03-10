@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+	buildCompactHashlineDiffPreview,
 	applyHashlineEdits,
 	computeLineHash,
 	hashlineParseText,
@@ -768,5 +769,78 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 		const resolved = resolveEditAnchors(toolEdits);
 		const result = applyHashlineEdits(content, resolved);
 		expect(result.content).toBe("aaa\nBBB\nccc");
+	});
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// buildCompactHashlineDiffPreview
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("buildCompactHashlineDiffPreview", () => {
+	it("returns empty preview for empty diff", () => {
+		const result = buildCompactHashlineDiffPreview("");
+		expect(result.preview).toBe("");
+		expect(result.addedLines).toBe(0);
+		expect(result.removedLines).toBe(0);
+	});
+
+	it("counts added and removed lines", () => {
+		const diff = [
+			" 1|context",
+			"-2|old line",
+			"-3|old line 2",
+			"+2|new line",
+			" 3|context",
+		].join("\n");
+		const result = buildCompactHashlineDiffPreview(diff);
+		expect(result.addedLines).toBe(1);
+		expect(result.removedLines).toBe(2);
+	});
+
+	it("collapses long unchanged runs in the middle", () => {
+		const lines: string[] = [];
+		lines.push("-1|removed");
+		for (let i = 2; i <= 12; i++) lines.push(` ${i}|unchanged`);
+		lines.push("+13|added");
+		const diff = lines.join("\n");
+		const result = buildCompactHashlineDiffPreview(diff);
+		expect(result.preview).toContain("more unchanged lines");
+		expect(result.addedLines).toBe(1);
+		expect(result.removedLines).toBe(1);
+	});
+
+	it("collapses long addition runs", () => {
+		const lines: string[] = [];
+		lines.push(" 1|context");
+		for (let i = 2; i <= 10; i++) lines.push(`+${i}|added line ${i}`);
+		lines.push(" 11|context");
+		const diff = lines.join("\n");
+		const result = buildCompactHashlineDiffPreview(diff);
+		expect(result.preview).toContain("more added lines");
+		expect(result.addedLines).toBe(9);
+	});
+
+	it("truncates total output lines", () => {
+		// Create many alternating runs to exceed maxOutputLines after per-run collapse
+		const lines: string[] = [];
+		for (let i = 0; i < 20; i++) {
+			lines.push(` ${i * 3 + 1}|ctx`);
+			lines.push(`-${i * 3 + 2}|old`);
+			lines.push(`+${i * 3 + 3}|new`);
+		}
+		const diff = lines.join("\n");
+		const result = buildCompactHashlineDiffPreview(diff, { maxOutputLines: 5 });
+		const outputLines = result.preview.split("\n");
+		expect(outputLines.length).toBeLessThanOrEqual(6);
+		expect(result.preview).toContain("more preview lines");
+	});
+
+	it("preserves meta lines", () => {
+		const diff = "--- a/foo.ts\n+++ b/foo.ts\n+1|new line";
+		const result = buildCompactHashlineDiffPreview(diff);
+		expect(result.preview).toContain("--- a/foo.ts");
+		expect(result.preview).toContain("+++ b/foo.ts");
+		expect(result.addedLines).toBe(1);
 	});
 });
