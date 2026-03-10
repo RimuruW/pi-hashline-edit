@@ -2,63 +2,65 @@ import type { ExtensionAPI, EditToolDetails } from "@mariozechner/pi-coding-agen
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { readFileSync } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
-import { constants } from "fs";
+import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, unlink as fsUnlink, mkdir as fsMkdir } from "fs/promises";
+import { constants, existsSync } from "fs";
+import { dirname } from "path";
 import { detectLineEnding, generateDiffString, normalizeToLF, replaceText, restoreLineEndings, stripBom } from "./edit-diff";
-import { applyHashlineEdits, computeLineHash, parseLineRef, type HashlineEditItem } from "./hashline";
+import {
+	applyHashlineEdits,
+	computeLineHash,
+	hashlineParseText,
+	parseLineRef,
+	resolveEditAnchors,
+	type HashlineToolEdit,
+} from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 
+// ─── Helpers ────────────────────────────────────────────────────────────
+
+function StringEnum<T extends string[]>(values: [...T]) {
+	return Type.Unsafe<T[number]>({ type: "string", enum: values });
+}
+
 // ─── Schema ─────────────────────────────────────────────────────────────
 
-const hashlineEditItemSchema = Type.Union([
-	Type.Object({ set_line: Type.Object({ anchor: Type.String(), new_text: Type.String() }) }, { additionalProperties: true }),
-	Type.Object(
-		{ replace_lines: Type.Object({ start_anchor: Type.String(), end_anchor: Type.String(), new_text: Type.String() }) },
-		{ additionalProperties: true },
-	),
-	Type.Object({ insert_after: Type.Object({ anchor: Type.String(), text: Type.String() }) }, { additionalProperties: true }),
-	Type.Object(
-		{ replace: Type.Object({ old_text: Type.String(), new_text: Type.String(), all: Type.Optional(Type.Boolean()) }) },
-		{ additionalProperties: true },
-	),
-]);
+const hashlineEditItemSchema = Type.Object(
+	{
+		op: StringEnum(["replace", "append", "prepend"]),
+		pos: Type.Optional(Type.String({ description: "anchor" })),
+		end: Type.Optional(Type.String({ description: "limit position" })),
+		lines: Type.Union([
+			Type.Array(Type.String(), { description: "content (preferred format)" }),
+			Type.String(),
+			Type.Null(),
+		]),
+	},
+	{ additionalProperties: false },
+);
+
+/** Schema for text search-replace edits (fallback mode). */
+const textReplaceSchema = Type.Object(
+	{
+		old_text: Type.String(),
+		new_text: Type.String(),
+		all: Type.Optional(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+);
 
 const hashlineEditSchema = Type.Object(
 	{
-		path: Type.String({ description: "File path (relative or absolute)" }),
-		edits: Type.Optional(Type.Array(hashlineEditItemSchema, { description: "Array of edit operations" })),
+		path: Type.String({ description: "path" }),
+		edits: Type.Optional(Type.Array(hashlineEditItemSchema, { description: "edits over $path" })),
+		delete: Type.Optional(Type.Boolean({ description: "If true, delete $path" })),
+		move: Type.Optional(Type.String({ description: "If set, move $path to $move" })),
+		text_replace: Type.Optional(Type.Array(textReplaceSchema, { description: "text search-replace operations" })),
 	},
 	{ additionalProperties: true },
 );
 
 type HashlineParams = Static<typeof hashlineEditSchema>;
-
-/**
- * Validates that an edit item contains exactly one valid variant key
- * and doesn't contain legacy or mismatched keys.
- */
-export function validateHashlineEditItem(e: Record<string, unknown>, index: number): void {
-	if (("old_text" in e || "new_text" in e) && !("replace" in e)) {
-		throw new Error(
-			`edits[${index}] has top-level 'old_text'/'new_text'. Use {replace: {old_text, new_text}} or {set_line}, {replace_lines}, {insert_after}.`,
-		);
-	}
-	if ("diff" in e) {
-		throw new Error(
-			`edits[${index}] contains 'diff' from patch mode. Hashline edit expects one of: {set_line}, {replace_lines}, {insert_after}, {replace}.`,
-		);
-	}
-	const variantCount =
-		Number("set_line" in e) + Number("replace_lines" in e) + Number("insert_after" in e) + Number("replace" in e);
-	if (variantCount !== 1) {
-		throw new Error(
-			`edits[${index}] must contain exactly one of: 'set_line', 'replace_lines', 'insert_after', 'replace'. Got: [${Object.keys(
-				e,
-			).join(", ")}].`,
-		);
-	}
-}
 
 const EDIT_DESC = readFileSync(new URL("../prompts/edit.md", import.meta.url), "utf-8").trim();
 
@@ -77,45 +79,34 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			const rawPath = parsed.path;
 			const path = rawPath.replace(/^@/, "");
 			const absolutePath = resolveToCwd(path, ctx.cwd);
+			const deleteFile = parsed.delete;
+			const move = parsed.move;
+			const resolvedMove = move ? resolveToCwd(move.replace(/^@/, ""), ctx.cwd) : undefined;
 			throwIfAborted(signal);
 
-			const legacyOldText =
-				typeof input.oldText === "string"
-					? input.oldText
-					: typeof input.old_text === "string"
-						? input.old_text
-						: undefined;
-			const legacyNewText =
-				typeof input.newText === "string"
-					? input.newText
-					: typeof input.new_text === "string"
-						? input.new_text
-						: undefined;
-			const hasLegacyInput = legacyOldText !== undefined || legacyNewText !== undefined;
-			const hasEditsInput = Array.isArray(parsed.edits);
-
-			let edits = parsed.edits ?? [];
-			let legacyNormalizationWarning: string | undefined;
-			if (!hasEditsInput && hasLegacyInput) {
-				if (legacyOldText === undefined || legacyNewText === undefined) {
-					throw new Error(
-						"Legacy edit input requires both oldText/newText (or old_text/new_text) when 'edits' is omitted.",
-					);
-				}
-				edits = [
-					{
-						replace: {
-							old_text: legacyOldText,
-							new_text: legacyNewText,
-							...(typeof input.all === "boolean" ? { all: input.all } : {}),
-						},
-					},
-				];
-				legacyNormalizationWarning =
-					"Legacy top-level oldText/newText input was normalized to edits[0].replace. Prefer the edits[] format.";
+			// ── Validate conflicting file-level operations ──
+			const hasEdits = Array.isArray(parsed.edits) && parsed.edits.length > 0;
+			const hasTextReplace = Array.isArray(parsed.text_replace) && parsed.text_replace.length > 0;
+			if (deleteFile && (move || hasEdits || hasTextReplace)) {
+				throw new Error(
+					"Conflicting file-level operations: 'delete' cannot be combined with 'move', 'edits', or 'text_replace'. Use separate calls.",
+				);
 			}
 
-			if (!edits.length) {
+			// ── File-level delete ──
+			if (deleteFile) {
+				if (existsSync(absolutePath)) {
+					await fsUnlink(absolutePath);
+				}
+				return {
+					content: [{ type: "text", text: `Deleted ${path}` }],
+					details: { diff: "", firstChangedLine: undefined } as EditToolDetails,
+				};
+			}
+			let toolEdits: HashlineToolEdit[] = (parsed.edits ?? []) as HashlineToolEdit[];
+			let textReplaceEdits = parsed.text_replace ?? [];
+
+			if (!toolEdits.length && !textReplaceEdits.length && !move) {
 				return {
 					content: [{ type: "text", text: "No edits provided." }],
 					isError: true,
@@ -123,23 +114,17 @@ export function registerEditTool(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Validate edit variant keys
-			for (let i = 0; i < edits.length; i++) {
-				throwIfAborted(signal);
-				validateHashlineEditItem(edits[i] as Record<string, unknown>, i);
-			}
-
-			const anchorEdits = edits.filter(
-				(e): e is HashlineEditItem => "set_line" in e || "replace_lines" in e || "insert_after" in e,
-			);
-			const replaceEdits = edits.filter(
-				(e): e is { replace: { old_text: string; new_text: string; all?: boolean } } => "replace" in e,
-			);
-
 			try {
 				await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
 			} catch {
 				throw new Error(`File not found: ${path}`);
+			}
+
+			// ── Validate move destination ──
+			if (resolvedMove && resolvedMove !== absolutePath && existsSync(resolvedMove)) {
+				throw new Error(
+					`Move destination already exists: ${move}. Remove the target first or choose a different path.`,
+				);
 			}
 			throwIfAborted(signal);
 
@@ -151,18 +136,21 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			const originalNormalized = normalizeToLF(content);
 			let result = originalNormalized;
 
-			const anchorResult = applyHashlineEdits(result, anchorEdits, signal);
+			// Resolve flat tool edits → typed HashlineEdit objects and apply
+			const resolved = resolveEditAnchors(toolEdits);
+			const anchorResult = applyHashlineEdits(result, resolved, signal);
 			result = anchorResult.content;
 
-			for (const r of replaceEdits) {
+			// Apply text search-replace edits
+			for (const r of textReplaceEdits) {
 				throwIfAborted(signal);
-				if (!r.replace.old_text.length) throw new Error("replace.old_text must not be empty.");
-				const rep = replaceText(result, r.replace.old_text, r.replace.new_text, { all: r.replace.all ?? false });
+				if (!r.old_text.length) throw new Error("old_text must not be empty.");
+				const rep = replaceText(result, r.old_text, r.new_text, { all: r.all ?? false });
 				if (!rep.count) throw new Error(`Could not find text to replace in ${path}.`);
 				result = rep.content;
 			}
 
-			if (originalNormalized === result) {
+			if (originalNormalized === result && !move) {
 				let diagnostic = `No changes made to ${path}. The edits produced identical content.`;
 				if (anchorResult.noopEdits?.length) {
 					diagnostic +=
@@ -170,27 +158,25 @@ export function registerEditTool(pi: ExtensionAPI): void {
 						anchorResult.noopEdits
 							.map(
 								(e) =>
-									`Edit ${e.editIndex}: replacement for ${e.loc} is identical to current content:\n  ${e.loc}| ${e.currentContent}`,
+									`Edit ${e.editIndex}: replacement for ${e.loc} is identical to current content:\n  ${e.loc}: ${e.currentContent}`,
 							)
 							.join("\n");
-					diagnostic += "\nRe-read the file to see the current state.";
+					diagnostic += "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
 				} else {
 					// Edits were not literally identical but heuristics normalized them back
 					const lines = result.split("\n");
 					const targetLines: string[] = [];
-					for (const edit of edits) {
+					for (const edit of toolEdits) {
 						const refs: string[] = [];
-						if ("set_line" in edit) refs.push((edit as any).set_line.anchor);
-						else if ("replace_lines" in edit) {
-							refs.push((edit as any).replace_lines.start_anchor, (edit as any).replace_lines.end_anchor);
-						} else if ("insert_after" in edit) refs.push((edit as any).insert_after.anchor);
+						if (edit.pos) refs.push(edit.pos);
+						if (edit.end) refs.push(edit.end);
 						for (const ref of refs) {
 							try {
-								const parsed = parseLineRef(ref);
-								if (parsed.line >= 1 && parsed.line <= lines.length) {
-									const lineContent = lines[parsed.line - 1];
-									const hash = computeLineHash(parsed.line, lineContent);
-									targetLines.push(`${parsed.line}:${hash}|${lineContent}`);
+								const p = parseLineRef(ref);
+								if (p.line >= 1 && p.line <= lines.length) {
+									const lineContent = lines[p.line - 1];
+									const hash = computeLineHash(p.line, lineContent);
+									targetLines.push(`${p.line}#${hash}:${lineContent}`);
 								}
 							} catch {
 								/* skip malformed refs */
@@ -206,16 +192,25 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			}
 
 			throwIfAborted(signal);
-			await fsWriteFile(absolutePath, bom + restoreLineEndings(result, originalEnding), "utf-8");
+
+			// ── Write result (possibly to moved path) ──
+			const writePath = resolvedMove ?? absolutePath;
+			if (resolvedMove) {
+				await fsMkdir(dirname(resolvedMove), { recursive: true });
+			}
+			await fsWriteFile(writePath, bom + restoreLineEndings(result, originalEnding), "utf-8");
+			if (resolvedMove && resolvedMove !== absolutePath) {
+				await fsUnlink(absolutePath);
+			}
 
 			const diffResult = generateDiffString(originalNormalized, result);
 			const warnings: string[] = [];
 			if (anchorResult.warnings?.length) warnings.push(...anchorResult.warnings);
-			if (legacyNormalizationWarning) warnings.push(legacyNormalizationWarning);
 			const warn = warnings.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
 
+			const resultText = move ? `Moved ${path} to ${move}` : `Updated ${path}`;
 			return {
-				content: [{ type: "text", text: `Updated ${path}${warn}` }],
+				content: [{ type: "text", text: `${resultText}${warn}` }],
 				details: {
 					diff: diffResult.diff,
 					firstChangedLine: anchorResult.firstChangedLine ?? diffResult.firstChangedLine,

@@ -9,7 +9,7 @@ import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 
 const GREP_DESC =
-	"Search file contents for a pattern. Returns matching lines with LINE:HASH anchors for hashline edit workflows.";
+	"Search file contents for a pattern. Returns matching lines with LINE#HASH anchors for hashline edit workflows.";
 
 const grepSchema = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
@@ -128,9 +128,9 @@ export function registerGrepTool(pi: ExtensionAPI): void {
 				const absolute = toAbsolutePath(parsed.displayPath);
 				const fileLines = await getFileLines(absolute);
 				const sourceLine = fileLines?.[parsed.lineNumber - 1] ?? parsed.text;
-				const ref = `${parsed.lineNumber}:${computeLineHash(parsed.lineNumber, sourceLine)}`;
+				const ref = `${parsed.lineNumber}#${computeLineHash(parsed.lineNumber, sourceLine)}`;
 				const marker = parsed.kind === "match" ? ">>" : "  ";
-				transformed.push(`${parsed.displayPath}:${marker}${ref}|${parsed.text}`);
+				transformed.push(`${parsed.displayPath}:${marker}${ref}:${parsed.text}`);
 			}
 
 			if (parsedCount === 0 && candidateUnparsedCount > 0) {
