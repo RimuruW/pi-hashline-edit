@@ -24,4 +24,11 @@ describe("formatHashlineReadPreview", () => {
 
     expect(result.text).toContain("Use offset=2 to continue");
   });
+
+  it("reports when offset is beyond end of content", () => {
+    const result = formatHashlineReadPreview("alpha\nbeta", { offset: 10 });
+
+    expect(result.text).toContain("Offset 10 is beyond end of file");
+    expect(result.text).toContain("2 lines total");
+  });
 });

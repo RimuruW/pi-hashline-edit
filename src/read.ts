@@ -46,6 +46,15 @@ export function formatHashlineReadPreview(
   const allLines = text.split("\n");
   const totalLines = allLines.length;
   const startLine = options.offset ? Math.max(1, options.offset) : 1;
+  if (startLine > totalLines) {
+    const suggestion =
+      totalLines === 0
+        ? "The file is empty."
+        : `Use offset=1 to read from the start, or offset=${totalLines} to read the last line.`;
+    return {
+      text: `Offset ${startLine} is beyond end of file (${totalLines} lines total). ${suggestion}`,
+    };
+  }
   const endIdx = options.limit
     ? Math.min(startLine - 1 + options.limit, totalLines)
     : totalLines;
