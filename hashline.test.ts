@@ -30,9 +30,9 @@ describe("computeLineHash", () => {
     expect(hash).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
   });
 
-  it("normalizes whitespace before hashing", () => {
-    expect(computeLineHash(1, "a  b")).toBe(computeLineHash(1, "a b"));
-    expect(computeLineHash(1, "\ta\t")).toBe(computeLineHash(1, "a"));
+  it("trims trailing whitespace without collapsing internal spaces", () => {
+    expect(computeLineHash(1, "a\t")).toBe(computeLineHash(1, "a"));
+    expect(computeLineHash(1, "a  b")).not.toBe(computeLineHash(1, "a b"));
   });
 
   it("strips trailing CR", () => {
@@ -172,8 +172,8 @@ describe("hashlineParseText", () => {
     expect(hashlineParseText("a\nb\n")).toEqual(["a", "b"]);
   });
 
-  it("removes trailing whitespace-only line", () => {
-    expect(hashlineParseText("a\nb\n  ")).toEqual(["a", "b"]);
+  it("preserves a trailing whitespace-only content line in string input", () => {
+    expect(hashlineParseText("a\nb\n  ")).toEqual(["a", "b", "  "]);
   });
 
   it("passes through array input as-is when no strip applies", () => {
@@ -186,10 +186,8 @@ describe("hashlineParseText", () => {
     expect(hashlineParseText(input)).toEqual(["foo", "bar"]);
   });
 
-  it("returns empty string as single empty line for blank content", () => {
-    // "" → split → [""] → no trailing trim (single element) → [""]
-    // Actually: "" → split → [""] → last is empty → slice(0, -1) → []
-    expect(hashlineParseText("")).toEqual([]);
+  it("returns empty string as a single empty line for blank content", () => {
+    expect(hashlineParseText("")).toEqual([""]);
   });
   it("preserves '# Note:' comment in hashlineParseText", () => {
     // Regression: HASHLINE_PREFIX_RE must not match '# Note:' as a hash prefix
@@ -358,10 +356,9 @@ describe("resolveEditAnchors", () => {
     );
   });
 
-  it("defaults missing op to replace", () => {
+  it("rejects missing op", () => {
     const edits: HashlineToolEdit[] = [{ pos: "1#ZZ", lines: ["x"] } as any];
-    const resolved = resolveEditAnchors(edits);
-    expect(resolved[0].op).toBe("replace");
+    expect(() => resolveEditAnchors(edits)).toThrow(/Unknown edit op/);
   });
 });
 

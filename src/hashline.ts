@@ -60,10 +60,7 @@ function xxh32(input: string, seed = 0): number {
 }
 
 export function computeLineHash(idx: number, line: string): string {
-  if (line.endsWith("\r")) line = line.slice(0, -1);
-  line = line.replace(/\s+/g, "");
-  // Mix in the line number for non-significant lines (e.g. "}", "---", blank)
-  // to reduce hash collisions on structural/separator lines.
+  line = line.replace(/\r/g, "").trimEnd();
   let seed = 0;
   if (!RE_SIGNIFICANT.test(line)) {
     seed = idx;
@@ -110,7 +107,7 @@ function formatMismatchError(
 
   const sorted = [...displayLines].sort((a, b) => a - b);
   const out: string[] = [
-    `${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Auto-relocation checks only within ±${HASH_RELOCATION_WINDOW} lines of each anchor. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
+    `${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
     "",
   ];
 
@@ -160,20 +157,20 @@ export function stripNewLinePrefixes(lines: string[]): string[] {
 }
 
 /**
- * Parse replacement text into lines with prefix stripping and trailing blank removal.
- * Accepts string[], string, or null — matching upstream hashlineParseText semantics:
- *   1. Normalize to string[]
- *   2. Strip hashline/diff prefixes
- *   3. Remove trailing blank line (models frequently include a trailing newline)
+ * Parse replacement text into lines with prefix stripping.
+ *
+ * String input is normalized to LF and drops exactly one trailing newline,
+ * matching read-preview style content. Array input is preserved verbatim after
+ * prefix stripping so explicitly provided blank lines remain intact.
  */
 export function hashlineParseText(edit: string[] | string | null): string[] {
   if (edit === null) return [];
-  const lines = stripNewLinePrefixes(
-    Array.isArray(edit) ? edit : edit.split("\n"),
-  );
-  if (lines.length === 0) return lines;
-  if (lines[lines.length - 1].trim() === "") return lines.slice(0, -1);
-  return lines;
+  if (typeof edit === "string") {
+    const normalized = edit.endsWith("\n") ? edit.slice(0, -1) : edit;
+    return stripNewLinePrefixes(normalized.replaceAll("\r", "").split("\n"));
+  }
+
+  return stripNewLinePrefixes(edit);
 }
 
 /**
@@ -189,7 +186,7 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  * - prepend + pos or end → prepend before that anchor
  * - no anchors → file-level append/prepend (only for those ops)
  *
- * Unknown ops default to "replace".
+ * Unknown or missing ops are rejected explicitly.
  */
 export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
   const result: HashlineEdit[] = [];
@@ -198,8 +195,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
     const tag = edit.pos ? parseLineRef(edit.pos) : undefined;
     const end = edit.end ? parseLineRef(edit.end) : undefined;
 
-    // Validate op
-    const op = edit.op ?? "replace";
+    const op = edit.op;
     if (op !== "replace" && op !== "append" && op !== "prepend") {
       throw new Error(
         `Unknown edit op "${op}". Expected "replace", "append", or "prepend".`,
