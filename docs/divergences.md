@@ -38,6 +38,6 @@ This extension shares oh-my-pi's core hashline engine (hash computation, edit ap
 
 **oh-my-pi**: Hashline mode only supports anchor-based edits. Substring replacement is a separate tool mode.
 
-**pi-hashline-edit**: Includes `text_replace` as a fallback within the same tool, plus legacy `oldText`/`newText` normalization.
+**pi-hashline-edit**: Includes `text_replace` as a fallback within the same tool.
 
 *Rationale*: Provides a safety hatch when anchors are unavailable (e.g., the model hasn't read the file yet) without requiring a mode switch.

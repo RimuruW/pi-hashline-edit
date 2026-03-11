@@ -77,11 +77,23 @@ This extension shares oh-my-pi's core hashline engine and regularly backports up
 ## Installation
 
 ```bash
-# From local path
 pi install /path/to/pi-hashline-edit
+```
 
-# From npm
-pi install npm:pi-hashline-edit
+## Development
+
+Install dependencies with Bun:
+
+```bash
+bun install
+```
+
+## Testing
+
+This repository uses **Bun** for dependency management and test execution.
+
+```bash
+bun test
 ```
 
 ## Technical Details

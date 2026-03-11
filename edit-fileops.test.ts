@@ -2,181 +2,141 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, mkdirSync, existsSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Helpers — lightweight simulation of the file-level operations from edit.ts
-// ═══════════════════════════════════════════════════════════════════════════
-
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, unlink as fsUnlink, mkdir as fsMkdir } from "fs/promises";
-import { dirname } from "path";
-
-/**
- * These tests validate the file-level delete/move logic extracted from the
- * edit tool executor, without requiring the full ExtensionAPI harness.
- */
+import {
+  deleteFileIfExists,
+  ensureMoveDestinationAvailable,
+  validateFileOperationRequest,
+  writeEditResult,
+} from "./src/edit-fileops";
 
 let testDir: string;
 
 beforeEach(() => {
-	testDir = join(tmpdir(), `edit-fileops-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	mkdirSync(testDir, { recursive: true });
+  testDir = join(
+    tmpdir(),
+    `edit-fileops-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  mkdirSync(testDir, { recursive: true });
 });
 
 afterEach(() => {
-	rmSync(testDir, { recursive: true, force: true });
+  rmSync(testDir, { recursive: true, force: true });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Delete
-// ═══════════════════════════════════════════════════════════════════════════
+describe("validateFileOperationRequest", () => {
+  it("rejects delete combined with move", () => {
+    expect(() =>
+      validateFileOperationRequest({
+        deleteFile: true,
+        move: "new/path.ts",
+        hasEdits: false,
+        hasTextReplace: false,
+      }),
+    ).toThrow(/Conflicting file-level operations/);
+  });
 
-describe("file-level delete", () => {
-	it("deletes an existing file", async () => {
-		const filePath = join(testDir, "to-delete.ts");
-		writeFileSync(filePath, "content");
-		expect(existsSync(filePath)).toBe(true);
+  it("rejects delete combined with edits", () => {
+    expect(() =>
+      validateFileOperationRequest({
+        deleteFile: true,
+        move: undefined,
+        hasEdits: true,
+        hasTextReplace: false,
+      }),
+    ).toThrow(/Conflicting file-level operations/);
+  });
 
-		await fsUnlink(filePath);
-
-		expect(existsSync(filePath)).toBe(false);
-	});
-
-	it("does not throw when deleting a non-existent file (with guard)", async () => {
-		const filePath = join(testDir, "nonexistent.ts");
-
-		// Matches the pattern in edit.ts: guard with existsSync before unlink
-		if (existsSync(filePath)) {
-			await fsUnlink(filePath);
-		}
-		// Should not throw — this is the expected behavior
-		expect(existsSync(filePath)).toBe(false);
-	});
+  it("allows delete alone", () => {
+    expect(() =>
+      validateFileOperationRequest({
+        deleteFile: true,
+        move: undefined,
+        hasEdits: false,
+        hasTextReplace: false,
+      }),
+    ).not.toThrow();
+  });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Move
-// ═══════════════════════════════════════════════════════════════════════════
+describe("ensureMoveDestinationAvailable", () => {
+  it("rejects move when destination already exists", () => {
+    const srcPath = join(testDir, "source.ts");
+    const dstPath = join(testDir, "existing-target.ts");
+    writeFileSync(srcPath, "source content");
+    writeFileSync(dstPath, "existing content");
 
-describe("file-level move", () => {
-	it("moves a file to a new path", async () => {
-		const srcPath = join(testDir, "original.ts");
-		const dstPath = join(testDir, "moved.ts");
-		writeFileSync(srcPath, "hello world");
+    expect(() =>
+      ensureMoveDestinationAvailable({
+        absolutePath: srcPath,
+        resolvedMove: dstPath,
+        move: "existing-target.ts",
+      }),
+    ).toThrow(/Move destination already exists/);
+  });
 
-		// Simulate the move logic from edit.ts
-		const content = readFileSync(srcPath, "utf-8");
-		await fsWriteFile(dstPath, content, "utf-8");
-		await fsUnlink(srcPath);
+  it("allows move to same path", () => {
+    const filePath = join(testDir, "same.ts");
+    writeFileSync(filePath, "stay put");
 
-		expect(existsSync(srcPath)).toBe(false);
-		expect(existsSync(dstPath)).toBe(true);
-		expect(readFileSync(dstPath, "utf-8")).toBe("hello world");
-	});
-
-	it("creates intermediate directories for move target", async () => {
-		const srcPath = join(testDir, "original.ts");
-		const dstPath = join(testDir, "sub", "dir", "moved.ts");
-		writeFileSync(srcPath, "nested move");
-
-		await fsMkdir(dirname(dstPath), { recursive: true });
-		const content = readFileSync(srcPath, "utf-8");
-		await fsWriteFile(dstPath, content, "utf-8");
-		await fsUnlink(srcPath);
-
-		expect(existsSync(srcPath)).toBe(false);
-		expect(existsSync(dstPath)).toBe(true);
-		expect(readFileSync(dstPath, "utf-8")).toBe("nested move");
-	});
-
-	it("move to same path is a no-op (no unlink)", async () => {
-		const filePath = join(testDir, "same.ts");
-		writeFileSync(filePath, "stay put");
-
-		// Simulate: resolvedMove === absolutePath → no unlink
-		const resolvedMove = filePath;
-		const absolutePath = filePath;
-		const content = readFileSync(absolutePath, "utf-8");
-		await fsWriteFile(resolvedMove, content, "utf-8");
-		if (resolvedMove !== absolutePath) {
-			await fsUnlink(absolutePath);
-		}
-
-		expect(existsSync(filePath)).toBe(true);
-		expect(readFileSync(filePath, "utf-8")).toBe("stay put");
-	});
-
-	it("preserves content when moving with edits applied", async () => {
-		const srcPath = join(testDir, "source.ts");
-		const dstPath = join(testDir, "destination.ts");
-		writeFileSync(srcPath, "line one\nline two\nline three\n");
-
-		// Simulate: read → edit → write to new path → unlink old
-		let content = readFileSync(srcPath, "utf-8");
-		content = content.replace("line two", "line TWO (edited)");
-		await fsWriteFile(dstPath, content, "utf-8");
-		await fsUnlink(srcPath);
-
-		expect(existsSync(srcPath)).toBe(false);
-		expect(readFileSync(dstPath, "utf-8")).toBe("line one\nline TWO (edited)\nline three\n");
-	});
+    expect(() =>
+      ensureMoveDestinationAvailable({
+        absolutePath: filePath,
+        resolvedMove: filePath,
+        move: "same.ts",
+      }),
+    ).not.toThrow();
+  });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Move — destination guard
-// ═══════════════════════════════════════════════════════════════════════════
+describe("deleteFileIfExists", () => {
+  it("deletes an existing file", async () => {
+    const filePath = join(testDir, "to-delete.ts");
+    writeFileSync(filePath, "content");
 
-describe("file-level move — destination guard", () => {
-	it("detects when destination already exists", () => {
-		const srcPath = join(testDir, "source.ts");
-		const dstPath = join(testDir, "existing-target.ts");
-		writeFileSync(srcPath, "source content");
-		writeFileSync(dstPath, "existing content");
+    await expect(deleteFileIfExists(filePath)).resolves.toBe(true);
+    expect(existsSync(filePath)).toBe(false);
+  });
 
-		// Simulate the guard from edit.ts
-		const resolvedMove = dstPath;
-		const absolutePath = srcPath;
-		if (resolvedMove && resolvedMove !== absolutePath && existsSync(resolvedMove)) {
-			expect(true).toBe(true); // guard correctly triggers
-		} else {
-			expect("guard should have triggered").toBe(true);
-		}
+  it("does not throw for a missing file", async () => {
+    const filePath = join(testDir, "missing.ts");
 
-		// Verify neither file was modified
-		expect(readFileSync(srcPath, "utf-8")).toBe("source content");
-		expect(readFileSync(dstPath, "utf-8")).toBe("existing content");
-	});
+    await expect(deleteFileIfExists(filePath)).resolves.toBe(false);
+    expect(existsSync(filePath)).toBe(false);
+  });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Delete — mutual exclusivity
-// ═══════════════════════════════════════════════════════════════════════════
+describe("writeEditResult", () => {
+  it("moves a file to a new path and preserves edited content", async () => {
+    const srcPath = join(testDir, "source.ts");
+    const dstPath = join(testDir, "nested", "destination.ts");
+    writeFileSync(srcPath, "line one\nline two\nline three\n");
 
-describe("file-level delete — mutual exclusivity", () => {
-	it("detects conflicting delete + move", () => {
-		// Simulate the validation from edit.ts
-		const deleteFile = true;
-		const move = "new/path.ts";
-		const hasEdits = false;
-		const hasTextReplace = false;
-		const isConflicting = !!(deleteFile && (move || hasEdits || hasTextReplace));
-		expect(isConflicting).toBe(true);
-	});
+    await writeEditResult({
+      absolutePath: srcPath,
+      resolvedMove: dstPath,
+      content: "line one\nline TWO (edited)\nline three\n",
+      encoding: "utf-8",
+    });
 
-	it("detects conflicting delete + edits", () => {
-		const deleteFile = true;
-		const move = undefined;
-		const hasEdits = true;
-		const hasTextReplace = false;
-		const isConflicting = deleteFile && (move || hasEdits || hasTextReplace);
-		expect(isConflicting).toBe(true);
-	});
+    expect(existsSync(srcPath)).toBe(false);
+    expect(existsSync(dstPath)).toBe(true);
+    expect(readFileSync(dstPath, "utf-8")).toBe(
+      "line one\nline TWO (edited)\nline three\n",
+    );
+  });
 
-	it("allows delete alone", () => {
-		const deleteFile = true;
-		const move = undefined;
-		const hasEdits = false;
-		const hasTextReplace = false;
-		const isConflicting = deleteFile && (move || hasEdits || hasTextReplace);
-		expect(isConflicting).toBe(false);
-	});
+  it("writes in place when move target matches source path", async () => {
+    const filePath = join(testDir, "same.ts");
+    writeFileSync(filePath, "before\n");
+
+    await writeEditResult({
+      absolutePath: filePath,
+      resolvedMove: filePath,
+      content: "after\n",
+      encoding: "utf-8",
+    });
+
+    expect(existsSync(filePath)).toBe(true);
+    expect(readFileSync(filePath, "utf-8")).toBe("after\n");
+  });
 });

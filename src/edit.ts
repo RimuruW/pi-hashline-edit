@@ -2,14 +2,13 @@ import type { ExtensionAPI, EditToolDetails } from "@mariozechner/pi-coding-agen
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { readFileSync } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile, unlink as fsUnlink, mkdir as fsMkdir } from "fs/promises";
-import { constants, existsSync } from "fs";
-import { dirname } from "path";
+import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { constants } from "fs";
+import { deleteFileIfExists, ensureMoveDestinationAvailable, validateFileOperationRequest, writeEditResult } from "./edit-fileops";
 import { detectLineEnding, generateDiffString, normalizeToLF, replaceText, restoreLineEndings, stripBom } from "./edit-diff";
 import {
 	applyHashlineEdits,
 	computeLineHash,
-	hashlineParseText,
 	parseLineRef,
 	resolveEditAnchors,
 	type HashlineToolEdit,
@@ -75,7 +74,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const parsed = params as HashlineParams;
-			const input = params as Record<string, unknown>;
 			const rawPath = parsed.path;
 			const path = rawPath.replace(/^@/, "");
 			const absolutePath = resolveToCwd(path, ctx.cwd);
@@ -87,17 +85,10 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			// ── Validate conflicting file-level operations ──
 			const hasEdits = Array.isArray(parsed.edits) && parsed.edits.length > 0;
 			const hasTextReplace = Array.isArray(parsed.text_replace) && parsed.text_replace.length > 0;
-			if (deleteFile && (move || hasEdits || hasTextReplace)) {
-				throw new Error(
-					"Conflicting file-level operations: 'delete' cannot be combined with 'move', 'edits', or 'text_replace'. Use separate calls.",
-				);
-			}
-
+			validateFileOperationRequest({ deleteFile, move, hasEdits, hasTextReplace });
 			// ── File-level delete ──
 			if (deleteFile) {
-				if (existsSync(absolutePath)) {
-					await fsUnlink(absolutePath);
-				}
+				await deleteFileIfExists(absolutePath);
 				return {
 					content: [{ type: "text", text: `Deleted ${path}` }],
 					details: { diff: "", firstChangedLine: undefined } as EditToolDetails,
@@ -121,11 +112,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			}
 
 			// ── Validate move destination ──
-			if (resolvedMove && resolvedMove !== absolutePath && existsSync(resolvedMove)) {
-				throw new Error(
-					`Move destination already exists: ${move}. Remove the target first or choose a different path.`,
-				);
-			}
+			ensureMoveDestinationAvailable({ absolutePath, resolvedMove, move });
 			throwIfAborted(signal);
 
 			const raw = (await fsReadFile(absolutePath)).toString("utf-8");
@@ -194,14 +181,12 @@ export function registerEditTool(pi: ExtensionAPI): void {
 			throwIfAborted(signal);
 
 			// ── Write result (possibly to moved path) ──
-			const writePath = resolvedMove ?? absolutePath;
-			if (resolvedMove) {
-				await fsMkdir(dirname(resolvedMove), { recursive: true });
-			}
-			await fsWriteFile(writePath, bom + restoreLineEndings(result, originalEnding), "utf-8");
-			if (resolvedMove && resolvedMove !== absolutePath) {
-				await fsUnlink(absolutePath);
-			}
+			await writeEditResult({
+				absolutePath,
+				resolvedMove,
+				content: bom + restoreLineEndings(result, originalEnding),
+				encoding: "utf-8",
+			});
 
 			const diffResult = generateDiffString(originalNormalized, result);
 			const warnings: string[] = [];
