@@ -3,22 +3,27 @@ import * as Diff from "diff";
 // ─── Line ending normalization ──────────────────────────────────────────
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
-	const crlfIdx = content.indexOf("\r\n");
-	const lfIdx = content.indexOf("\n");
-	if (lfIdx === -1 || crlfIdx === -1) return "\n";
-	return crlfIdx < lfIdx ? "\r\n" : "\n";
+  const crlfIdx = content.indexOf("\r\n");
+  const lfIdx = content.indexOf("\n");
+  if (lfIdx === -1 || crlfIdx === -1) return "\n";
+  return crlfIdx < lfIdx ? "\r\n" : "\n";
 }
 
 export function normalizeToLF(text: string): string {
-	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
-export function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string {
-	return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
+export function restoreLineEndings(
+  text: string,
+  ending: "\r\n" | "\n",
+): string {
+  return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
 
 export function stripBom(content: string): { bom: string; text: string } {
-	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
+  return content.startsWith("\uFEFF")
+    ? { bom: "\uFEFF", text: content.slice(1) }
+    : { bom: "", text: content };
 }
 
 // ─── Fuzzy text matching ────────────────────────────────────────────────
@@ -29,60 +34,67 @@ const HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
 const UNICODE_SPACES_RE = /[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g;
 
 function normalizeFuzzyChar(ch: string): string {
-	return ch.replace(SINGLE_QUOTES_RE, "'").replace(DOUBLE_QUOTES_RE, '"').replace(HYPHENS_RE, "-").replace(UNICODE_SPACES_RE, " ");
+  return ch
+    .replace(SINGLE_QUOTES_RE, "'")
+    .replace(DOUBLE_QUOTES_RE, '"')
+    .replace(HYPHENS_RE, "-")
+    .replace(UNICODE_SPACES_RE, " ");
 }
 
 function normalizeForFuzzyMatch(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => line.trimEnd())
-		.join("\n")
-		.replace(SINGLE_QUOTES_RE, "'")
-		.replace(DOUBLE_QUOTES_RE, '"')
-		.replace(HYPHENS_RE, "-")
-		.replace(UNICODE_SPACES_RE, " ");
+  return text
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(SINGLE_QUOTES_RE, "'")
+    .replace(DOUBLE_QUOTES_RE, '"')
+    .replace(HYPHENS_RE, "-")
+    .replace(UNICODE_SPACES_RE, " ");
 }
 
-function buildNormalizedWithMap(text: string): { normalized: string; indexMap: number[] } {
-	const lines = text.split("\n");
-	const normalizedChars: string[] = [];
-	const indexMap: number[] = [];
-	let originalOffset = 0;
+function buildNormalizedWithMap(text: string): {
+  normalized: string;
+  indexMap: number[];
+} {
+  const lines = text.split("\n");
+  const normalizedChars: string[] = [];
+  const indexMap: number[] = [];
+  let originalOffset = 0;
 
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i]!;
-		const trimmed = line.replace(/\s+$/u, "");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.replace(/\s+$/u, "");
 
-		for (let j = 0; j < trimmed.length; j++) {
-			normalizedChars.push(normalizeFuzzyChar(trimmed[j]!));
-			indexMap.push(originalOffset + j);
-		}
+    for (let j = 0; j < trimmed.length; j++) {
+      normalizedChars.push(normalizeFuzzyChar(trimmed[j]!));
+      indexMap.push(originalOffset + j);
+    }
 
-		if (i < lines.length - 1) {
-			normalizedChars.push("\n");
-			indexMap.push(originalOffset + line.length);
-		}
+    if (i < lines.length - 1) {
+      normalizedChars.push("\n");
+      indexMap.push(originalOffset + line.length);
+    }
 
-		originalOffset += line.length + 1;
-	}
+    originalOffset += line.length + 1;
+  }
 
-	return { normalized: normalizedChars.join(""), indexMap };
+  return { normalized: normalizedChars.join(""), indexMap };
 }
 
 function mapNormalizedSpanToOriginal(
-	indexMap: number[],
-	normalizedStart: number,
-	normalizedLength: number,
+  indexMap: number[],
+  normalizedStart: number,
+  normalizedLength: number,
 ): { index: number; matchLength: number } | null {
-	if (normalizedStart < 0 || normalizedLength <= 0) return null;
-	const normalizedEnd = normalizedStart + normalizedLength;
-	if (normalizedEnd > indexMap.length) return null;
+  if (normalizedStart < 0 || normalizedLength <= 0) return null;
+  const normalizedEnd = normalizedStart + normalizedLength;
+  if (normalizedEnd > indexMap.length) return null;
 
-	const start = indexMap[normalizedStart];
-	const end = indexMap[normalizedEnd - 1];
-	if (start === undefined || end === undefined || end < start) return null;
+  const start = indexMap[normalizedStart];
+  const end = indexMap[normalizedEnd - 1];
+  if (start === undefined || end === undefined || end < start) return null;
 
-	return { index: start, matchLength: end - start + 1 };
+  return { index: start, matchLength: end - start + 1 };
 }
 
 /**
@@ -90,29 +102,49 @@ function mapNormalizedSpanToOriginal(
  * Always returns an index/length in the original content.
  */
 export function fuzzyFindText(
-	content: string,
-	oldText: string,
-): { found: boolean; index: number; matchLength: number; usedFuzzyMatch: boolean } {
-	const exactIndex = content.indexOf(oldText);
-	if (exactIndex !== -1) {
-		return { found: true, index: exactIndex, matchLength: oldText.length, usedFuzzyMatch: false };
-	}
+  content: string,
+  oldText: string,
+): {
+  found: boolean;
+  index: number;
+  matchLength: number;
+  usedFuzzyMatch: boolean;
+} {
+  const exactIndex = content.indexOf(oldText);
+  if (exactIndex !== -1) {
+    return {
+      found: true,
+      index: exactIndex,
+      matchLength: oldText.length,
+      usedFuzzyMatch: false,
+    };
+  }
 
-	const normalizedNeedle = normalizeForFuzzyMatch(oldText);
-	if (!normalizedNeedle.length) return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
+  const normalizedNeedle = normalizeForFuzzyMatch(oldText);
+  if (!normalizedNeedle.length)
+    return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
 
-	const { normalized, indexMap } = buildNormalizedWithMap(content);
-	const normalizedIndex = normalized.indexOf(normalizedNeedle);
-	if (normalizedIndex === -1) {
-		return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
-	}
+  const { normalized, indexMap } = buildNormalizedWithMap(content);
+  const normalizedIndex = normalized.indexOf(normalizedNeedle);
+  if (normalizedIndex === -1) {
+    return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
+  }
 
-	const mapped = mapNormalizedSpanToOriginal(indexMap, normalizedIndex, normalizedNeedle.length);
-	if (!mapped) {
-		return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
-	}
+  const mapped = mapNormalizedSpanToOriginal(
+    indexMap,
+    normalizedIndex,
+    normalizedNeedle.length,
+  );
+  if (!mapped) {
+    return { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false };
+  }
 
-	return { found: true, index: mapped.index, matchLength: mapped.matchLength, usedFuzzyMatch: true };
+  return {
+    found: true,
+    index: mapped.index,
+    matchLength: mapped.matchLength,
+    usedFuzzyMatch: true,
+  };
 }
 
 /**
@@ -121,131 +153,154 @@ export function fuzzyFindText(
  * the original content (never normalizes the whole file).
  */
 export function replaceText(
-	content: string,
-	oldText: string,
-	newText: string,
-	opts: { all?: boolean },
+  content: string,
+  oldText: string,
+  newText: string,
+  opts: { all?: boolean },
 ): { content: string; count: number } {
-	if (!oldText.length) return { content, count: 0 };
-	const normalizedNew = normalizeToLF(newText);
+  if (!oldText.length) return { content, count: 0 };
+  const normalizedNew = normalizeToLF(newText);
 
-	if (opts.all) {
-		const exactCount = content.split(oldText).length - 1;
-		if (exactCount > 0) {
-			return { content: content.split(oldText).join(normalizedNew), count: exactCount };
-		}
+  if (opts.all) {
+    const exactCount = content.split(oldText).length - 1;
+    if (exactCount > 0) {
+      return {
+        content: content.split(oldText).join(normalizedNew),
+        count: exactCount,
+      };
+    }
 
-		const normalizedNeedle = normalizeForFuzzyMatch(oldText);
-		if (!normalizedNeedle.length) return { content, count: 0 };
+    const normalizedNeedle = normalizeForFuzzyMatch(oldText);
+    if (!normalizedNeedle.length) return { content, count: 0 };
 
-		const { normalized, indexMap } = buildNormalizedWithMap(content);
-		const spans: Array<{ index: number; matchLength: number }> = [];
-		let searchFrom = 0;
+    const { normalized, indexMap } = buildNormalizedWithMap(content);
+    const spans: Array<{ index: number; matchLength: number }> = [];
+    let searchFrom = 0;
 
-		while (searchFrom <= normalized.length - normalizedNeedle.length) {
-			const pos = normalized.indexOf(normalizedNeedle, searchFrom);
-			if (pos === -1) break;
-			const mapped = mapNormalizedSpanToOriginal(indexMap, pos, normalizedNeedle.length);
-			if (mapped) {
-				const prev = spans[spans.length - 1];
-				if (!prev || mapped.index >= prev.index + prev.matchLength) {
-					spans.push(mapped);
-				}
-			}
-			searchFrom = pos + Math.max(1, normalizedNeedle.length);
-		}
+    while (searchFrom <= normalized.length - normalizedNeedle.length) {
+      const pos = normalized.indexOf(normalizedNeedle, searchFrom);
+      if (pos === -1) break;
+      const mapped = mapNormalizedSpanToOriginal(
+        indexMap,
+        pos,
+        normalizedNeedle.length,
+      );
+      if (mapped) {
+        const prev = spans[spans.length - 1];
+        if (!prev || mapped.index >= prev.index + prev.matchLength) {
+          spans.push(mapped);
+        }
+      }
+      searchFrom = pos + Math.max(1, normalizedNeedle.length);
+    }
 
-		if (!spans.length) return { content, count: 0 };
+    if (!spans.length) return { content, count: 0 };
 
-		let out = content;
-		for (let i = spans.length - 1; i >= 0; i--) {
-			const span = spans[i]!;
-			out = out.substring(0, span.index) + normalizedNew + out.substring(span.index + span.matchLength);
-		}
-		return { content: out, count: spans.length };
-	}
+    let out = content;
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const span = spans[i]!;
+      out =
+        out.substring(0, span.index) +
+        normalizedNew +
+        out.substring(span.index + span.matchLength);
+    }
+    return { content: out, count: spans.length };
+  }
 
-	const result = fuzzyFindText(content, oldText);
-	if (!result.found) return { content, count: 0 };
+  const result = fuzzyFindText(content, oldText);
+  if (!result.found) return { content, count: 0 };
 
-	return {
-		content: content.substring(0, result.index) + normalizedNew + content.substring(result.index + result.matchLength),
-		count: 1,
-	};
+  return {
+    content:
+      content.substring(0, result.index) +
+      normalizedNew +
+      content.substring(result.index + result.matchLength),
+    count: 1,
+  };
 }
 
 // ─── Diff generation ────────────────────────────────────────────────────
 
 export function generateDiffString(
-	oldContent: string,
-	newContent: string,
-	contextLines = 4,
+  oldContent: string,
+  newContent: string,
+  contextLines = 4,
 ): { diff: string; firstChangedLine: number | undefined } {
-	const parts = Diff.diffLines(oldContent, newContent);
-	const output: string[] = [];
-	const maxLineNum = Math.max(oldContent.split("\n").length, newContent.split("\n").length);
-	const lineNumWidth = String(maxLineNum).length;
-	let oldLineNum = 1;
-	let newLineNum = 1;
-	let lastWasChange = false;
-	let firstChangedLine: number | undefined;
+  const parts = Diff.diffLines(oldContent, newContent);
+  const output: string[] = [];
+  const maxLineNum = Math.max(
+    oldContent.split("\n").length,
+    newContent.split("\n").length,
+  );
+  const lineNumWidth = String(maxLineNum).length;
+  let oldLineNum = 1;
+  let newLineNum = 1;
+  let lastWasChange = false;
+  let firstChangedLine: number | undefined;
 
-	for (let i = 0; i < parts.length; i++) {
-		const part = parts[i]!;
-		const raw = part.value.split("\n");
-		if (raw[raw.length - 1] === "") raw.pop();
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    const raw = part.value.split("\n");
+    if (raw[raw.length - 1] === "") raw.pop();
 
-		if (part.added || part.removed) {
-			if (firstChangedLine === undefined) firstChangedLine = newLineNum;
-			for (const line of raw) {
-				if (part.added) {
-					output.push(`+${String(newLineNum).padStart(lineNumWidth, " ")} ${line}`);
-					newLineNum++;
-				} else {
-					output.push(`-${String(oldLineNum).padStart(lineNumWidth, " ")} ${line}`);
-					oldLineNum++;
-				}
-			}
-			lastWasChange = true;
-			continue;
-		}
+    if (part.added || part.removed) {
+      if (firstChangedLine === undefined) firstChangedLine = newLineNum;
+      for (const line of raw) {
+        if (part.added) {
+          output.push(
+            `+${String(newLineNum).padStart(lineNumWidth, " ")} ${line}`,
+          );
+          newLineNum++;
+        } else {
+          output.push(
+            `-${String(oldLineNum).padStart(lineNumWidth, " ")} ${line}`,
+          );
+          oldLineNum++;
+        }
+      }
+      lastWasChange = true;
+      continue;
+    }
 
-		const nextPartIsChange = i < parts.length - 1 && (parts[i + 1]!.added || parts[i + 1]!.removed);
-		if (lastWasChange || nextPartIsChange) {
-			let linesToShow = raw;
-			let skipStart = 0;
-			let skipEnd = 0;
+    const nextPartIsChange =
+      i < parts.length - 1 && (parts[i + 1]!.added || parts[i + 1]!.removed);
+    if (lastWasChange || nextPartIsChange) {
+      let linesToShow = raw;
+      let skipStart = 0;
+      let skipEnd = 0;
 
-			if (!lastWasChange) {
-				skipStart = Math.max(0, raw.length - contextLines);
-				linesToShow = raw.slice(skipStart);
-			}
-			if (!nextPartIsChange && linesToShow.length > contextLines) {
-				skipEnd = linesToShow.length - contextLines;
-				linesToShow = linesToShow.slice(0, contextLines);
-			}
+      if (!lastWasChange) {
+        skipStart = Math.max(0, raw.length - contextLines);
+        linesToShow = raw.slice(skipStart);
+      }
+      if (!nextPartIsChange && linesToShow.length > contextLines) {
+        skipEnd = linesToShow.length - contextLines;
+        linesToShow = linesToShow.slice(0, contextLines);
+      }
 
-			if (skipStart > 0) {
-				output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
-				oldLineNum += skipStart;
-				newLineNum += skipStart;
-			}
-			for (const line of linesToShow) {
-				output.push(` ${String(oldLineNum).padStart(lineNumWidth, " ")} ${line}`);
-				oldLineNum++;
-				newLineNum++;
-			}
-			if (skipEnd > 0) {
-				output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
-				oldLineNum += skipEnd;
-				newLineNum += skipEnd;
-			}
-		} else {
-			oldLineNum += raw.length;
-			newLineNum += raw.length;
-		}
-		lastWasChange = false;
-	}
+      if (skipStart > 0) {
+        output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+        oldLineNum += skipStart;
+        newLineNum += skipStart;
+      }
+      for (const line of linesToShow) {
+        output.push(
+          ` ${String(oldLineNum).padStart(lineNumWidth, " ")} ${line}`,
+        );
+        oldLineNum++;
+        newLineNum++;
+      }
+      if (skipEnd > 0) {
+        output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+        oldLineNum += skipEnd;
+        newLineNum += skipEnd;
+      }
+    } else {
+      oldLineNum += raw.length;
+      newLineNum += raw.length;
+    }
+    lastWasChange = false;
+  }
 
-	return { diff: output.join("\n"), firstChangedLine };
+  return { diff: output.join("\n"), firstChangedLine };
 }

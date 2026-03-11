@@ -1,65 +1,45 @@
-Applies precise file edits using `LINE#ID` tags from `read` output.
+Applies precise file edits using `LINE#HASH` tags from `read` output.
 
 <workflow>
-1. You **SHOULD** issue a `read` call before editing if you have no tagged context for a file.
-2. You **MUST** pick the smallest operation per change site.
-3. You **MUST** submit one `edit` call per file with all operations, think your changes through before submitting.
+1. You **SHOULD** issue a `read` call before editing if you do not already have fresh tagged context for the file.
+2. You **MUST** submit one `edit` call per file with all planned operations.
+3. You **MUST** use the smallest operation per change site.
 </workflow>
 
 <prohibited>
-You **MUST NOT** use this tool for formatting-only edits: reindenting, realigning, brace-style changes, whitespace normalization, or line-length wrapping. Any edit whose diff is purely whitespace is a formatting operation — run the appropriate formatter for the project instead.
+You **MUST NOT** use this tool for formatting-only edits: reindenting, realigning, brace-style changes, whitespace normalization, or line-length wrapping. If the diff is only whitespace, do not use `edit`.
 </prohibited>
 
+<contract>
+Payload shape: `{ path, edits }`
+- `path`: target file path
+- `edits`: array of strict hashline edit operations
+- No extra root keys
+- No legacy search override, destructive file operations, or substring replacement fields
+</contract>
+
 <operations>
-Every edit has `op`, `pos`, and `lines`. Range replaces also have `end`. Both `pos` and `end` use `"N#ID"` format (e.g. `"23#XY"`).
-**`pos`** — the anchor line. Meaning depends on `op`:
-- `replace`: start of range (or the single line to replace)
-- `prepend`: insert new lines **before** this line; omit for beginning of file
-- `append`: insert new lines **after** this line; omit for end of file
-**`end`** — range replace only. The last line of the range (inclusive). Omit for single-line replace.
-**`lines`** — the replacement content:
-- `["line1", "line2"]` — replace with these lines (array of strings)
-- `"line1"` — shorthand for `["line1"]` (single-line replace)
-- `[""]` — replace content with a blank line (line preserved, content cleared)
-- `null` or `[]` — **delete** the line(s) entirely
+Every edit entry has `op`, `lines`, and optional `pos` / `end`.
+- `replace`: replace one line (`pos`) or a range (`pos` + `end`)
+- `append`: insert after `pos`; omit `pos` for end of file
+- `prepend`: insert before `pos`; omit `pos` for beginning of file
 
-### Line or range replace/delete
-- `{ path: "…", edits: [{ op: "replace", pos: "N#ID", lines: null }] }` — delete one line
-- `{ path: "…", edits: [{ op: "replace", pos: "N#ID", end: "M#ID", lines: null }] }` — delete a range
-- `{ path: "…", edits: [{ op: "replace", pos: "N#ID", lines: [...] }] }` — replace one line
-- `{ path: "…", edits: [{ op: "replace", pos: "N#ID", end: "M#ID", lines: [...] }] }` — replace a range
-
-### Insert new lines
-- `{ path: "…", edits: [{ op: "prepend", pos: "N#ID", lines: [...] }] }` — insert before tagged line
-- `{ path: "…", edits: [{ op: "prepend", lines: [...] }] }` — insert at beginning of file (no tag)
-- `{ path: "…", edits: [{ op: "append", pos: "N#ID", lines: [...] }] }` — insert after tagged line
-- `{ path: "…", edits: [{ op: "append", lines: [...] }] }` — insert at end of file (no tag)
-
-### File-level controls
-- `{ path: "…", delete: true, edits: [] }` — delete the file
-- `{ path: "…", move: "new/path.ts", edits: [...] }` — move file to new path (edits applied first)
-**Atomicity:** all ops in one call validate against the same pre-edit snapshot; tags reference the last `read`. Edits are applied bottom-up, so earlier tags stay valid even when later ops add or remove lines.
+Anchors use `"N#ID"` format from fresh `read` output.
+Examples:
+- `{ path: "src/file.ts", edits: [{ op: "replace", pos: "12#MQ", lines: ["const x = 1;"] }] }`
+- `{ path: "src/file.ts", edits: [{ op: "replace", pos: "12#MQ", end: "14#VR", lines: null }] }`
+- `{ path: "src/file.ts", edits: [{ op: "append", pos: "20#NK", lines: ["footer();"] }] }`
+- `{ path: "src/file.ts", edits: [{ op: "prepend", lines: ["// header"] }] }`
 </operations>
 
 <rules>
-1. **Minimize scope:** You **MUST** use one logical mutation per operation.
-2. **`end` is inclusive:** If `lines` includes a closing token (`}`, `]`, `)`, `);`, `},`), `end` **MUST** include the original boundary line. To delete a line while keeping neighbors, use `lines: null` — do not replace it with an adjacent line's content.
-3. **Copy indentation from `read` output:** Leading whitespace in `lines` **MUST** follow adjacent lines exactly. Do not reconstruct from memory.
-4. **Verify the splice before submitting:** For each edit op, mentally read the result:
-   - Does the last `lines` entry duplicate the line surviving after `end`? → extend `end` or remove the duplicate.
-   - Does the first `lines` entry duplicate the line before `pos`? → the edit is wrong.
-   - For `prepend`/`append`: does new code land inside or outside the enclosing block? Trace the braces.
+1. `end` is inclusive.
+2. Copy indentation exactly from fresh `read` output.
+3. `lines` must be literal file content; do not include hashline prefixes unless copied accidentally.
+4. Extra keys are invalid.
 </rules>
 
 <recovery>
-**Tag mismatch (`>>>`):** You **MUST** retry using fresh tags from the error snippet. If snippet lacks context, or if you repeatedly fail, you **MUST** re-read the file and issue less ambitious edits, i.e. single op.
-**No-op (`identical`):** You **MUST NOT** resubmit. Re-read target lines and adjust the edit.
+**Tag mismatch (`>>>`)**: retry with the updated `LINE#HASH` references from the error snippet. If needed, re-read the file and make a smaller edit.
+**No-op (`identical`)**: do not resubmit unchanged content. Re-read and change actual file content.
 </recovery>
-
-<critical>
-- Edit payload: `{ path, edits[] }`. Each entry: `op`, `lines`, optional `pos`/`end`. No extra keys.
-- Every tag **MUST** be copied exactly from fresh tool result as `N#ID`.
-- You **MUST** re-read after each edit call before issuing another on same file.
-- Formatting is a batch operation. You **MUST NOT** use this tool to reformat, reindent, or adjust whitespace — run the project's formatter instead. If the only change is whitespace, it is formatting; do not touch it.
-- `lines` entries **MUST** be literal file content with indentation copied exactly from the `read` output. If the file uses tabs, use `\t` in JSON (a real tab character) — you **MUST NOT** use `\\t` (two characters: backslash + t), which produces the literal string `\t` in the file.
-</critical>

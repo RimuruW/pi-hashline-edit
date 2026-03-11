@@ -11,20 +11,20 @@ import { throwIfAborted } from "./runtime";
 
 export type Anchor = { line: number; hash: string };
 export type HashlineEdit =
-	| { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
-	| { op: "append"; pos?: Anchor; lines: string[] }
-	| { op: "prepend"; pos?: Anchor; lines: string[] };
+  | { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
+  | { op: "append"; pos?: Anchor; lines: string[] }
+  | { op: "prepend"; pos?: Anchor; lines: string[] };
 
 interface HashMismatch {
-	line: number;
-	expected: string;
-	actual: string;
+  line: number;
+  expected: string;
+  actual: string;
 }
 
 interface NoopEdit {
-	editIndex: number;
-	loc: string;
-	currentContent: string;
+  editIndex: number;
+  loc: string;
+  currentContent: string;
 }
 
 // ─── Hash computation ───────────────────────────────────────────────────
@@ -41,119 +41,136 @@ interface NoopEdit {
 const NIBBLE_STR = "ZPMQVRWSNKTXJBYH";
 
 const DICT = Array.from({ length: 256 }, (_, i) => {
-	const h = i >>> 4;
-	const l = i & 0x0f;
-	return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
+  const h = i >>> 4;
+  const l = i & 0x0f;
+  return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
 });
 
 /** Pattern matching hashline display format prefixes: `LINE#ID:CONTENT` and `#ID:CONTENT` */
-const HASHLINE_PREFIX_RE = /^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
+const HASHLINE_PREFIX_RE =
+  /^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
 const DIFF_PLUS_RE = /^\+(?!\+)/;
-const HASH_RELOCATION_WINDOW = 20;
 
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
 
 function xxh32(input: string, seed = 0): number {
-	return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
+  return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
 }
 
 export function computeLineHash(idx: number, line: string): string {
-	if (line.endsWith("\r")) line = line.slice(0, -1);
-	line = line.replace(/\s+/g, "");
-	// Mix in the line number for non-significant lines (e.g. "}", "---", blank)
-	// to reduce hash collisions on structural/separator lines.
-	let seed = 0;
-	if (!RE_SIGNIFICANT.test(line)) {
-		seed = idx;
-	}
-	return DICT[xxh32(line, seed) & 0xff];
+  line = line.replace(/\r/g, "").trimEnd();
+  let seed = 0;
+  if (!RE_SIGNIFICANT.test(line)) {
+    seed = idx;
+  }
+  return DICT[xxh32(line, seed) & 0xff];
 }
 
 // ─── Parsing ────────────────────────────────────────────────────────────
 
 export function parseLineRef(ref: string): { line: number; hash: string } {
-	// Match LINE#HASH format, tolerating:
-	//  - leading ">+" and whitespace (from mismatch/diff display)
-	//  - optional trailing display suffix (":..." content)
-	const match = ref.match(/^\s*[>+-]*\s*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})/);
-	if (!match) throw new Error(`Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`);
-	const line = Number.parseInt(match[1], 10);
-	if (line < 1) throw new Error(`Line number must be >= 1, got ${line} in "${ref}".`);
-	return { line, hash: match[2] };
+  // Match LINE#HASH format, tolerating:
+  //  - leading ">+" and whitespace (from mismatch/diff display)
+  //  - optional trailing display suffix (":..." content)
+  const match = ref.match(/^\s*[>+-]*\s*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})/);
+  if (!match)
+    throw new Error(
+      `Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`,
+    );
+  const line = Number.parseInt(match[1], 10);
+  if (line < 1)
+    throw new Error(`Line number must be >= 1, got ${line} in "${ref}".`);
+  return { line, hash: match[2] };
 }
 
 // ─── Mismatch formatting ────────────────────────────────────────────────
 
-function formatMismatchError(mismatches: HashMismatch[], fileLines: string[]): string {
-	const mismatchSet = new Map<number, HashMismatch>();
-	for (const m of mismatches) mismatchSet.set(m.line, m);
+function formatMismatchError(
+  mismatches: HashMismatch[],
+  fileLines: string[],
+): string {
+  const mismatchSet = new Map<number, HashMismatch>();
+  for (const m of mismatches) mismatchSet.set(m.line, m);
 
-	const displayLines = new Set<number>();
-	for (const m of mismatches) {
-		for (let i = Math.max(1, m.line - 2); i <= Math.min(fileLines.length, m.line + 2); i++) {
-			displayLines.add(i);
-		}
-	}
+  const displayLines = new Set<number>();
+  for (const m of mismatches) {
+    for (
+      let i = Math.max(1, m.line - 2);
+      i <= Math.min(fileLines.length, m.line + 2);
+      i++
+    ) {
+      displayLines.add(i);
+    }
+  }
 
-	const sorted = [...displayLines].sort((a, b) => a - b);
-	const out: string[] = [
-		`${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Auto-relocation checks only within ±${HASH_RELOCATION_WINDOW} lines of each anchor. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
-		"",
-	];
+  const sorted = [...displayLines].sort((a, b) => a - b);
+  const out: string[] = [
+    `${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
+    "",
+  ];
 
-	let prev = -1;
-	for (const num of sorted) {
-		if (prev !== -1 && num > prev + 1) out.push("    ...");
-		prev = num;
-		const content = fileLines[num - 1];
-		const hash = computeLineHash(num, content);
-		const prefix = `${num}#${hash}`;
-		out.push(mismatchSet.has(num) ? `>>> ${prefix}:${content}` : `    ${prefix}:${content}`);
-	}
+  let prev = -1;
+  for (const num of sorted) {
+    if (prev !== -1 && num > prev + 1) out.push("    ...");
+    prev = num;
+    const content = fileLines[num - 1];
+    const hash = computeLineHash(num, content);
+    const prefix = `${num}#${hash}`;
+    out.push(
+      mismatchSet.has(num)
+        ? `>>> ${prefix}:${content}`
+        : `    ${prefix}:${content}`,
+    );
+  }
 
-	return out.join("\n");
+  return out.join("\n");
 }
 
 // ─── Content preprocessing ─────────────────────────────────────────────────────
 
 export function stripNewLinePrefixes(lines: string[]): string[] {
-	let hashCount = 0;
-	let plusCount = 0;
-	let nonEmpty = 0;
+  let hashCount = 0;
+  let plusCount = 0;
+  let nonEmpty = 0;
 
-	for (const l of lines) {
-		if (!l.length) continue;
-		nonEmpty++;
-		if (HASHLINE_PREFIX_RE.test(l)) hashCount++;
-		if (DIFF_PLUS_RE.test(l)) plusCount++;
-	}
+  for (const l of lines) {
+    if (!l.length) continue;
+    nonEmpty++;
+    if (HASHLINE_PREFIX_RE.test(l)) hashCount++;
+    if (DIFF_PLUS_RE.test(l)) plusCount++;
+  }
 
-	if (!nonEmpty) return lines;
-	const stripHash = hashCount > 0 && hashCount === nonEmpty;
-	const stripPlus = !stripHash && plusCount > 0 && plusCount >= nonEmpty * 0.5;
-	if (!stripHash && !stripPlus) return lines;
+  if (!nonEmpty) return lines;
+  const stripHash = hashCount > 0 && hashCount === nonEmpty;
+  const stripPlus = !stripHash && plusCount > 0 && plusCount >= nonEmpty * 0.5;
+  if (!stripHash && !stripPlus) return lines;
 
-	return lines.map((l) =>
-		stripHash ? l.replace(HASHLINE_PREFIX_RE, "") : stripPlus ? l.replace(DIFF_PLUS_RE, "") : l,
-	);
+  return lines.map((l) =>
+    stripHash
+      ? l.replace(HASHLINE_PREFIX_RE, "")
+      : stripPlus
+        ? l.replace(DIFF_PLUS_RE, "")
+        : l,
+  );
 }
 
 /**
- * Parse replacement text into lines with prefix stripping and trailing blank removal.
- * Accepts string[], string, or null — matching upstream hashlineParseText semantics:
- *   1. Normalize to string[]
- *   2. Strip hashline/diff prefixes
- *   3. Remove trailing blank line (models frequently include a trailing newline)
+ * Parse replacement text into lines with prefix stripping.
+ *
+ * String input is normalized to LF and drops exactly one trailing newline,
+ * matching read-preview style content. Array input is preserved verbatim after
+ * prefix stripping so explicitly provided blank lines remain intact.
  */
 export function hashlineParseText(edit: string[] | string | null): string[] {
-	if (edit === null) return [];
-	const lines = stripNewLinePrefixes(Array.isArray(edit) ? edit : edit.split("\n"));
-	if (lines.length === 0) return lines;
-	if (lines[lines.length - 1].trim() === "") return lines.slice(0, -1);
-	return lines;
-}
+  if (edit === null) return [];
+  if (typeof edit === "string") {
+    const normalized = edit.endsWith("\n") ? edit.slice(0, -1) : edit;
+    return stripNewLinePrefixes(normalized.replaceAll("\r", "").split("\n"));
+  }
 
+  return stripNewLinePrefixes(edit);
+}
 
 /**
  * Map flat tool-schema edits into typed internal representations.
@@ -168,396 +185,363 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  * - prepend + pos or end → prepend before that anchor
  * - no anchors → file-level append/prepend (only for those ops)
  *
- * Unknown ops default to "replace".
+ * Unknown or missing ops are rejected explicitly.
  */
 export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
-	const result: HashlineEdit[] = [];
-	for (const edit of edits) {
-		const lines = hashlineParseText(edit.lines);
-		const tag = edit.pos ? parseLineRef(edit.pos) : undefined;
-		const end = edit.end ? parseLineRef(edit.end) : undefined;
+  const result: HashlineEdit[] = [];
+  for (const edit of edits) {
+    const lines = hashlineParseText(edit.lines);
+    const tag = edit.pos ? parseLineRef(edit.pos) : undefined;
+    const end = edit.end ? parseLineRef(edit.end) : undefined;
 
-		// Validate op
-		const op = edit.op ?? "replace";
-		if (op !== "replace" && op !== "append" && op !== "prepend") {
-			throw new Error(`Unknown edit op "${op}". Expected "replace", "append", or "prepend".`);
-		}
-		switch (op) {
-			case "replace": {
-				if (tag && end) {
-					result.push({ op: "replace", pos: tag, end, lines });
-				} else if (tag || end) {
-					result.push({ op: "replace", pos: tag || end!, lines });
-				} else {
-					throw new Error("Replace requires at least one anchor (pos or end).");
-				}
-				break;
-			}
-			case "append": {
-				result.push({ op: "append", pos: tag ?? end, lines });
-				break;
-			}
-			case "prepend": {
-				result.push({ op: "prepend", pos: end ?? tag, lines });
-				break;
-			}
-		}
-	}
-	return result;
+    const op = edit.op;
+    if (op !== "replace" && op !== "append" && op !== "prepend") {
+      throw new Error(
+        `Unknown edit op "${op}". Expected "replace", "append", or "prepend".`,
+      );
+    }
+    switch (op) {
+      case "replace": {
+        if (tag && end) {
+          result.push({ op: "replace", pos: tag, end, lines });
+        } else if (tag || end) {
+          result.push({ op: "replace", pos: tag || end!, lines });
+        } else {
+          throw new Error("Replace requires at least one anchor (pos or end).");
+        }
+        break;
+      }
+      case "append": {
+        result.push({ op: "append", pos: tag ?? end, lines });
+        break;
+      }
+      case "prepend": {
+        result.push({ op: "prepend", pos: end ?? tag, lines });
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 // ─── Main edit engine ───────────────────────────────────────────────────
 
 /** Schema-level edit as received from the tool layer (pos/end are tag strings, lines may be string|null). */
 export type HashlineToolEdit = {
-	op: string;
-	pos?: string;
-	end?: string;
-	lines: string[] | string | null;
+  op: string;
+  pos?: string;
+  end?: string;
+  lines: string[] | string | null;
 };
-
 
 const MIN_AUTOCORRECT_LENGTH = 2;
 
 function shouldAutocorrect(line: string, otherLine: string): boolean {
-	if (!line || line !== otherLine) return false;
-	line = line.trim();
-	if (line.length < MIN_AUTOCORRECT_LENGTH) {
-		// Short lines: only allow brace/paren closers
-		return line.endsWith("}") || line.endsWith(")");
-	}
-	return true;
+  if (!line || line !== otherLine) return false;
+  line = line.trim();
+  if (line.length < MIN_AUTOCORRECT_LENGTH) {
+    // Short lines: only allow brace/paren closers
+    return line.endsWith("}") || line.endsWith(")");
+  }
+  return true;
 }
 export function applyHashlineEdits(
-	content: string,
-	edits: HashlineEdit[],
-	signal?: AbortSignal,
-): { content: string; firstChangedLine: number | undefined; warnings?: string[]; noopEdits?: NoopEdit[] } {
-	throwIfAborted(signal);
-	if (!edits.length) return { content, firstChangedLine: undefined };
+  content: string,
+  edits: HashlineEdit[],
+  signal?: AbortSignal,
+): {
+  content: string;
+  firstChangedLine: number | undefined;
+  warnings?: string[];
+  noopEdits?: NoopEdit[];
+} {
+  throwIfAborted(signal);
+  if (!edits.length) return { content, firstChangedLine: undefined };
 
-	const fileLines = content.split("\n");
-	const origLines = [...fileLines];
-	let firstChanged: number | undefined;
-	const noopEdits: NoopEdit[] = [];
-	const warnings: string[] = [];
+  const fileLines = content.split("\n");
+  const origLines = [...fileLines];
+  let firstChanged: number | undefined;
+  const noopEdits: NoopEdit[] = [];
+  const warnings: string[] = [];
 
-	// Build hash index for local-window relocation
-	const lineHashes: string[] = [];
-	const hashToLines = new Map<string, number[]>();
-	for (let i = 0; i < fileLines.length; i++) {
-		throwIfAborted(signal);
-		const lineNumber = i + 1;
-		const h = computeLineHash(lineNumber, fileLines[i]);
-		lineHashes.push(h);
-		const bucket = hashToLines.get(h);
-		if (bucket) bucket.push(lineNumber);
-		else hashToLines.set(h, [lineNumber]);
-	}
+  // Validate all refs before mutation
+  const mismatches: HashMismatch[] = [];
+  function validate(ref: Anchor): boolean {
+    if (ref.line < 1 || ref.line > fileLines.length) {
+      throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
+    }
+    const actual = computeLineHash(ref.line, fileLines[ref.line - 1]);
+    if (actual === ref.hash) return true;
+    mismatches.push({ line: ref.line, expected: ref.hash, actual });
+    return false;
+  }
 
-	const relocationNotes = new Set<string>();
+  // Pre-validate: collect all hash mismatches before mutating
+  for (const edit of edits) {
+    throwIfAborted(signal);
+    switch (edit.op) {
+      case "replace": {
+        if (edit.end) {
+          if (edit.pos.line > edit.end.line) {
+            throw new Error(
+              `Range start line ${edit.pos.line} must be <= end line ${edit.end.line}`,
+            );
+          }
+          const startOk = validate(edit.pos);
+          const endOk = validate(edit.end);
+          if (!startOk || !endOk) continue;
+        } else {
+          if (!validate(edit.pos)) continue;
+        }
+        break;
+      }
+      case "append": {
+        if (edit.pos && !validate(edit.pos)) continue;
+        if (edit.lines.length === 0) {
+          throw new Error(
+            "Append with empty lines payload. Provide content to insert or remove the edit.",
+          );
+        }
+        break;
+      }
+      case "prepend": {
+        if (edit.pos && !validate(edit.pos)) continue;
+        if (edit.lines.length === 0) {
+          throw new Error(
+            "Prepend with empty lines payload. Provide content to insert or remove the edit.",
+          );
+        }
+        break;
+      }
+    }
+  }
+  if (mismatches.length)
+    throw new Error(formatMismatchError(mismatches, fileLines));
 
-	function findRelocationLine(expectedHash: string, hintLine: number): number | undefined {
-		const candidates = hashToLines.get(expectedHash);
-		if (!candidates?.length) return undefined;
+  // Deduplicate identical edits
+  const seenEditKeys = new Map<string, number>();
+  const dedupIndices = new Set<number>();
+  for (let i = 0; i < edits.length; i++) {
+    throwIfAborted(signal);
+    const edit = edits[i];
+    let lineKey: string;
+    switch (edit.op) {
+      case "replace":
+        if (!edit.end) {
+          lineKey = `s:${edit.pos.line}`;
+        } else {
+          lineKey = `r:${edit.pos.line}:${edit.end.line}`;
+        }
+        break;
+      case "append":
+        if (edit.pos) {
+          lineKey = `i:${edit.pos.line}`;
+          break;
+        }
+        lineKey = "ieof";
+        break;
+      case "prepend":
+        if (edit.pos) {
+          lineKey = `ib:${edit.pos.line}`;
+          break;
+        }
+        lineKey = "ibef";
+        break;
+    }
+    const dstKey = `${lineKey}:${edit.lines.join("\n")}`;
+    if (seenEditKeys.has(dstKey)) {
+      dedupIndices.add(i);
+    } else {
+      seenEditKeys.set(dstKey, i);
+    }
+  }
+  if (dedupIndices.size > 0) {
+    for (let i = edits.length - 1; i >= 0; i--) {
+      if (dedupIndices.has(i)) edits.splice(i, 1);
+    }
+  }
 
-		const minLine = Math.max(1, hintLine - HASH_RELOCATION_WINDOW);
-		const maxLine = Math.min(fileLines.length, hintLine + HASH_RELOCATION_WINDOW);
-		let match: number | undefined;
+  // Compute sort key (descending) — bottom-up application
+  const annotated = edits.map((edit, idx) => {
+    let sortLine: number;
+    let precedence: number;
+    switch (edit.op) {
+      case "replace":
+        if (!edit.end) {
+          sortLine = edit.pos.line;
+        } else {
+          sortLine = edit.end.line;
+        }
+        precedence = 0;
+        break;
+      case "append":
+        sortLine = edit.pos ? edit.pos.line : fileLines.length + 1;
+        precedence = 1;
+        break;
+      case "prepend":
+        sortLine = edit.pos ? edit.pos.line : 0;
+        precedence = 2;
+        break;
+    }
+    return { edit, idx, sortLine, precedence };
+  });
 
-		for (const candidate of candidates) {
-			if (candidate < minLine || candidate > maxLine) continue;
-			if (match !== undefined) return undefined; // ambiguous within window
-			match = candidate;
-		}
-		return match;
-	}
+  annotated.sort(
+    (a, b) =>
+      b.sortLine - a.sortLine || a.precedence - b.precedence || a.idx - b.idx,
+  );
 
-	// Validate all refs before mutation
-	const mismatches: HashMismatch[] = [];
 
-	function validate(ref: Anchor): boolean {
-		if (ref.line < 1 || ref.line > fileLines.length)
-			throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
-		const expected = ref.hash;
-		const originalLine = ref.line;
-		const actual = lineHashes[originalLine - 1];
-		if (actual === expected) return true;
-		const relocated = findRelocationLine(expected, originalLine);
-		if (relocated !== undefined) {
-			ref.line = relocated;
-			relocationNotes.add(
-				`Auto-relocated anchor ${originalLine}#${ref.hash} -> ${relocated}#${ref.hash} (window ±${HASH_RELOCATION_WINDOW}).`,
-			);
-			return true;
-		}
-		mismatches.push({ line: originalLine, expected: ref.hash, actual });
-		return false;
-	}
+  // Apply edits bottom-up
+  for (const { edit, idx } of annotated) {
+    throwIfAborted(signal);
+    switch (edit.op) {
+      case "replace": {
+        if (!edit.end) {
+          const origLine = origLines.slice(edit.pos.line - 1, edit.pos.line);
+          const newLines = edit.lines;
+          if (
+            origLine.length === newLines.length &&
+            origLine.every((line, i) => line === newLines[i])
+          ) {
+            noopEdits.push({
+              editIndex: idx,
+              loc: `${edit.pos.line}#${edit.pos.hash}`,
+              currentContent: origLine.join("\n"),
+            });
+            break;
+          }
+          fileLines.splice(edit.pos.line - 1, 1, ...newLines);
+          track(edit.pos.line);
+        } else {
+          const count = edit.end.line - edit.pos.line + 1;
+          const orig = origLines.slice(
+            edit.pos.line - 1,
+            edit.pos.line - 1 + count,
+          );
 
-	// Pre-validate: collect all hash mismatches before mutating
-	for (const edit of edits) {
-		throwIfAborted(signal);
-		switch (edit.op) {
-			case "replace": {
-				if (edit.end) {
-					const originalStart = edit.pos.line;
-					const originalEnd = edit.end.line;
-					const originalCount = originalEnd - originalStart + 1;
+          // Noop check on range replaces
+          if (
+            orig.length === edit.lines.length &&
+            orig.every((line, i) => line === edit.lines[i])
+          ) {
+            noopEdits.push({
+              editIndex: idx,
+              loc: `${edit.pos.line}#${edit.pos.hash}`,
+              currentContent: orig.join("\n"),
+            });
+            break;
+          }
 
-					if (originalStart > originalEnd) {
-						throw new Error(`Range start line ${originalStart} must be <= end line ${originalEnd}`);
-					}
+          const newLines = [...edit.lines];
+          // Auto-correct trailing duplicate: if the last replacement line duplicates
+          // the next surviving line after the range, the model likely echoed the
+          // boundary. Strip the duplicate to avoid doubled lines.
+          const trailingReplacementLine =
+            newLines[newLines.length - 1]?.trimEnd();
+          const nextSurvivingLine = fileLines[edit.end.line]?.trimEnd();
+          if (
+            shouldAutocorrect(trailingReplacementLine, nextSurvivingLine) &&
+            // Safety: only correct when end-line content differs from the duplicate.
+            // If end already points to the boundary, matching next line is coincidence.
+            fileLines[edit.end.line - 1]?.trimEnd() !== trailingReplacementLine
+          ) {
+            newLines.pop();
+            warnings.push(
+              `Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed trailing replacement line "${trailingReplacementLine}" that duplicated next surviving line`,
+            );
+          }
+          // Auto-correct leading duplicate: if the first replacement line duplicates
+          // the line before the range start, the model likely echoed the preceding
+          // context. Strip the duplicate.
+          const leadingReplacementLine = newLines[0]?.trimEnd();
+          const prevSurvivingLine = fileLines[edit.pos.line - 2]?.trimEnd();
+          if (
+            shouldAutocorrect(leadingReplacementLine, prevSurvivingLine) &&
+            // Safety: only correct when pos-line content differs from the duplicate.
+            // If pos already points to the boundary, matching prev line is coincidence.
+            fileLines[edit.pos.line - 1]?.trimEnd() !== leadingReplacementLine
+          ) {
+            newLines.shift();
+            warnings.push(
+              `Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed leading replacement line "${leadingReplacementLine}" that duplicated preceding surviving line`,
+            );
+          }
+          fileLines.splice(edit.pos.line - 1, count, ...newLines);
+          track(edit.pos.line);
+        }
+        break;
+      }
+      case "append": {
+        const inserted = edit.lines;
+        if (inserted.length === 0) {
+          noopEdits.push({
+            editIndex: idx,
+            loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "EOF",
+            currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
+          });
+          break;
+        }
+        if (edit.pos) {
+          fileLines.splice(edit.pos.line, 0, ...inserted);
+          track(edit.pos.line + 1);
+        } else {
+          if (fileLines.length === 1 && fileLines[0] === "") {
+            fileLines.splice(0, 1, ...inserted);
+            track(1);
+          } else {
+            fileLines.splice(fileLines.length, 0, ...inserted);
+            track(fileLines.length - inserted.length + 1);
+          }
+        }
+        break;
+      }
+      case "prepend": {
+        const inserted = edit.lines;
+        if (inserted.length === 0) {
+          noopEdits.push({
+            editIndex: idx,
+            loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "BOF",
+            currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
+          });
+          break;
+        }
+        if (edit.pos) {
+          fileLines.splice(edit.pos.line - 1, 0, ...inserted);
+          track(edit.pos.line);
+        } else {
+          if (fileLines.length === 1 && fileLines[0] === "") {
+            fileLines.splice(0, 1, ...inserted);
+          } else {
+            fileLines.splice(0, 0, ...inserted);
+          }
+          track(1);
+        }
+        break;
+      }
+    }
+  }
 
-					const startOk = validate(edit.pos);
-					const endOk = validate(edit.end);
-					if (!startOk || !endOk) continue;
+  let diff = Math.abs(fileLines.length - origLines.length);
+  for (let i = 0; i < Math.min(fileLines.length, origLines.length); i++) {
+    if (fileLines[i] !== origLines[i]) diff++;
+  }
+  if (diff > edits.length * 4) {
+    warnings.push(
+      `Edit changed ${diff} lines across ${edits.length} operations — verify no unintended reformatting.`,
+    );
+  }
 
-					// If both validated but relocation invalidated the range, revert and report mismatch
-					const relocatedCount = edit.end.line - edit.pos.line + 1;
-					const invalidRange = edit.pos.line > edit.end.line;
-					const scopeChanged = relocatedCount !== originalCount;
-					if (invalidRange || scopeChanged) {
-						edit.pos.line = originalStart;
-						edit.end.line = originalEnd;
-						mismatches.push(
-							{ line: originalStart, expected: edit.pos.hash, actual: lineHashes[originalStart - 1] },
-							{ line: originalEnd, expected: edit.end.hash, actual: lineHashes[originalEnd - 1] },
-						);
-					}
-				} else {
-					if (!validate(edit.pos)) continue;
-				}
-				break;
-			}
-			case "append": {
-				if (edit.pos && !validate(edit.pos)) continue;
-				if (edit.lines.length === 0) {
-					throw new Error("Append with empty lines payload. Provide content to insert or remove the edit.");
-				}
-				break;
-			}
-			case "prepend": {
-				if (edit.pos && !validate(edit.pos)) continue;
-				if (edit.lines.length === 0) {
-					throw new Error("Prepend with empty lines payload. Provide content to insert or remove the edit.");
-				}
-				break;
-			}
-		}
-	}
-	if (mismatches.length) throw new Error(formatMismatchError(mismatches, fileLines));
+  return {
+    content: fileLines.join("\n"),
+    firstChangedLine: firstChanged,
+    ...(warnings.length ? { warnings } : {}),
+    ...(noopEdits.length ? { noopEdits } : {}),
+  };
 
-	// Deduplicate identical edits
-	const seenEditKeys = new Map<string, number>();
-	const dedupIndices = new Set<number>();
-	for (let i = 0; i < edits.length; i++) {
-		throwIfAborted(signal);
-		const edit = edits[i];
-		let lineKey: string;
-		switch (edit.op) {
-			case "replace":
-				if (!edit.end) {
-					lineKey = `s:${edit.pos.line}`;
-				} else {
-					lineKey = `r:${edit.pos.line}:${edit.end.line}`;
-				}
-				break;
-			case "append":
-				if (edit.pos) {
-					lineKey = `i:${edit.pos.line}`;
-					break;
-				}
-				lineKey = "ieof";
-				break;
-			case "prepend":
-				if (edit.pos) {
-					lineKey = `ib:${edit.pos.line}`;
-					break;
-				}
-				lineKey = "ibef";
-				break;
-		}
-		const dstKey = `${lineKey}:${edit.lines.join("\n")}`;
-		if (seenEditKeys.has(dstKey)) {
-			dedupIndices.add(i);
-		} else {
-			seenEditKeys.set(dstKey, i);
-		}
-	}
-	if (dedupIndices.size > 0) {
-		for (let i = edits.length - 1; i >= 0; i--) {
-			if (dedupIndices.has(i)) edits.splice(i, 1);
-		}
-	}
-
-	// Compute sort key (descending) — bottom-up application
-	const annotated = edits.map((edit, idx) => {
-		let sortLine: number;
-		let precedence: number;
-		switch (edit.op) {
-			case "replace":
-				if (!edit.end) {
-					sortLine = edit.pos.line;
-				} else {
-					sortLine = edit.end.line;
-				}
-				precedence = 0;
-				break;
-			case "append":
-				sortLine = edit.pos ? edit.pos.line : fileLines.length + 1;
-				precedence = 1;
-				break;
-			case "prepend":
-				sortLine = edit.pos ? edit.pos.line : 0;
-				precedence = 2;
-				break;
-		}
-		return { edit, idx, sortLine, precedence };
-	});
-
-	annotated.sort((a, b) => b.sortLine - a.sortLine || a.precedence - b.precedence || a.idx - b.idx);
-
-	warnings.push(...relocationNotes);
-
-	// Apply edits bottom-up
-	for (const { edit, idx } of annotated) {
-		throwIfAborted(signal);
-		switch (edit.op) {
-			case "replace": {
-				if (!edit.end) {
-					const origLine = origLines.slice(edit.pos.line - 1, edit.pos.line);
-					const newLines = edit.lines;
-					if (origLine.length === newLines.length && origLine.every((line, i) => line === newLines[i])) {
-						noopEdits.push({
-							editIndex: idx,
-							loc: `${edit.pos.line}#${edit.pos.hash}`,
-							currentContent: origLine.join("\n"),
-						});
-						break;
-					}
-					fileLines.splice(edit.pos.line - 1, 1, ...newLines);
-					track(edit.pos.line);
-				} else {
-					const count = edit.end.line - edit.pos.line + 1;
-					const orig = origLines.slice(edit.pos.line - 1, edit.pos.line - 1 + count);
-
-					// Noop check on range replaces
-					if (orig.length === edit.lines.length && orig.every((line, i) => line === edit.lines[i])) {
-						noopEdits.push({
-							editIndex: idx,
-							loc: `${edit.pos.line}#${edit.pos.hash}`,
-							currentContent: orig.join("\n"),
-						});
-						break;
-					}
-
-					const newLines = [...edit.lines];
-					// Auto-correct trailing duplicate: if the last replacement line duplicates
-					// the next surviving line after the range, the model likely echoed the
-					// boundary. Strip the duplicate to avoid doubled lines.
-					const trailingReplacementLine = newLines[newLines.length - 1]?.trimEnd();
-					const nextSurvivingLine = fileLines[edit.end.line]?.trimEnd();
-					if (
-						shouldAutocorrect(trailingReplacementLine, nextSurvivingLine) &&
-						// Safety: only correct when end-line content differs from the duplicate.
-						// If end already points to the boundary, matching next line is coincidence.
-						fileLines[edit.end.line - 1]?.trimEnd() !== trailingReplacementLine
-					) {
-						newLines.pop();
-						warnings.push(
-							`Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed trailing replacement line "${trailingReplacementLine}" that duplicated next surviving line`,
-						);
-					}
-					// Auto-correct leading duplicate: if the first replacement line duplicates
-					// the line before the range start, the model likely echoed the preceding
-					// context. Strip the duplicate.
-					const leadingReplacementLine = newLines[0]?.trimEnd();
-					const prevSurvivingLine = fileLines[edit.pos.line - 2]?.trimEnd();
-					if (
-						shouldAutocorrect(leadingReplacementLine, prevSurvivingLine) &&
-						// Safety: only correct when pos-line content differs from the duplicate.
-						// If pos already points to the boundary, matching prev line is coincidence.
-						fileLines[edit.pos.line - 1]?.trimEnd() !== leadingReplacementLine
-					) {
-						newLines.shift();
-						warnings.push(
-							`Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed leading replacement line "${leadingReplacementLine}" that duplicated preceding surviving line`,
-						);
-					}
-					fileLines.splice(edit.pos.line - 1, count, ...newLines);
-					track(edit.pos.line);
-				}
-				break;
-			}
-			case "append": {
-				const inserted = edit.lines;
-				if (inserted.length === 0) {
-					noopEdits.push({
-						editIndex: idx,
-						loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "EOF",
-						currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
-					});
-					break;
-				}
-				if (edit.pos) {
-					fileLines.splice(edit.pos.line, 0, ...inserted);
-					track(edit.pos.line + 1);
-				} else {
-					if (fileLines.length === 1 && fileLines[0] === "") {
-						fileLines.splice(0, 1, ...inserted);
-						track(1);
-					} else {
-						fileLines.splice(fileLines.length, 0, ...inserted);
-						track(fileLines.length - inserted.length + 1);
-					}
-				}
-				break;
-			}
-			case "prepend": {
-				const inserted = edit.lines;
-				if (inserted.length === 0) {
-					noopEdits.push({
-						editIndex: idx,
-						loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "BOF",
-						currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
-					});
-					break;
-				}
-				if (edit.pos) {
-					fileLines.splice(edit.pos.line - 1, 0, ...inserted);
-					track(edit.pos.line);
-				} else {
-					if (fileLines.length === 1 && fileLines[0] === "") {
-						fileLines.splice(0, 1, ...inserted);
-					} else {
-						fileLines.splice(0, 0, ...inserted);
-					}
-					track(1);
-				}
-				break;
-			}
-		}
-	}
-
-	let diff = Math.abs(fileLines.length - origLines.length);
-	for (let i = 0; i < Math.min(fileLines.length, origLines.length); i++) {
-		if (fileLines[i] !== origLines[i]) diff++;
-	}
-	if (diff > edits.length * 4) {
-		warnings.push(`Edit changed ${diff} lines across ${edits.length} operations — verify no unintended reformatting.`);
-	}
-
-	return {
-		content: fileLines.join("\n"),
-		firstChangedLine: firstChanged,
-		...(warnings.length ? { warnings } : {}),
-		...(noopEdits.length ? { noopEdits } : {}),
-	};
-
-	function track(line: number): void {
-		if (firstChanged === undefined || line < firstChanged) {
-			firstChanged = line;
-		}
-	}
+  function track(line: number): void {
+    if (firstChanged === undefined || line < firstChanged) {
+      firstChanged = line;
+    }
+  }
 }
