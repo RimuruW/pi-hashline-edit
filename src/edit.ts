@@ -11,6 +11,10 @@ import {
   restoreLineEndings,
   stripBom,
 } from "./edit-diff";
+import {
+  applyExactUniqueLegacyReplace,
+  extractLegacyTopLevelReplace,
+} from "./edit-compat";
 import { writeFileAtomically } from "./fs-write";
 import {
   applyHashlineEdits,
@@ -41,28 +45,43 @@ const hashlineEditItemSchema = Type.Object(
 const hashlineEditSchema = Type.Object(
   {
     path: Type.String({ description: "path" }),
-    edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
+    edits: Type.Optional(
+      Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
+    ),
+    oldText: Type.Optional(Type.String()),
+    newText: Type.Optional(Type.String()),
+    old_text: Type.Optional(Type.String()),
+    new_text: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
 
-type HashlineParams = Static<typeof hashlineEditSchema>;
+type EditRequestParams = Static<typeof hashlineEditSchema>;
+
+type CompatibilityDetails = {
+  used: true;
+  strategy: "legacy-top-level-replace";
+  matchCount: 1;
+};
 
 const EDIT_DESC = readFileSync(
   new URL("../prompts/edit.md", import.meta.url),
   "utf-8",
 ).trim();
 
-const ROOT_KEYS = new Set(["path", "edits"]);
+const ROOT_KEYS = new Set(["path", "edits", "oldText", "newText", "old_text", "new_text"]);
 const ITEM_KEYS = new Set(["op", "pos", "end", "lines"]);
+const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function assertStrictHashlineRequest(
-  request: unknown,
-): asserts request is HashlineParams {
+function hasOwn(request: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(request, key);
+}
+
+export function assertEditRequest(request: unknown): asserts request is EditRequestParams {
   if (!isRecord(request)) {
     throw new Error("Edit request must be an object.");
   }
@@ -78,8 +97,28 @@ export function assertStrictHashlineRequest(
     throw new Error('Edit request requires a non-empty "path" string.');
   }
 
+  if (hasOwn(request, "edits") && !Array.isArray(request.edits)) {
+    throw new Error('Edit request requires an "edits" array when provided.');
+  }
+
+  for (const legacyKey of LEGACY_KEYS) {
+    if (hasOwn(request, legacyKey) && typeof request[legacyKey] !== "string") {
+      throw new Error(`Edit request field "${legacyKey}" must be a string.`);
+    }
+  }
+
+  const hasAnyLegacyKey = LEGACY_KEYS.some((key) => hasOwn(request, key));
+  if (!Array.isArray(request.edits) && hasAnyLegacyKey) {
+    const legacy = extractLegacyTopLevelReplace(request);
+    if (!legacy) {
+      throw new Error(
+        'Legacy top-level replace requires both oldText/newText or old_text/new_text when "edits" is absent.',
+      );
+    }
+  }
+
   if (!Array.isArray(request.edits)) {
-    throw new Error('Edit request requires an "edits" array.');
+    return;
   }
 
   for (const [index, edit] of request.edits.entries()) {
@@ -104,14 +143,17 @@ export function registerEditTool(pi: ExtensionAPI): void {
     parameters: hashlineEditSchema,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      assertStrictHashlineRequest(params);
+      assertEditRequest(params);
 
       const rawPath = params.path;
       const path = rawPath.replace(/^@/, "");
       const absolutePath = resolveToCwd(path, ctx.cwd);
-      const toolEdits = params.edits as HashlineToolEdit[];
+      const toolEdits = Array.isArray(params.edits)
+        ? (params.edits as HashlineToolEdit[])
+        : [];
+      const legacy = extractLegacyTopLevelReplace(params as Record<string, unknown>);
 
-      if (toolEdits.length === 0) {
+      if (toolEdits.length === 0 && !legacy) {
         return {
           content: [{ type: "text", text: "No edits provided." }],
           isError: true,
@@ -133,24 +175,54 @@ export function registerEditTool(pi: ExtensionAPI): void {
       const { bom, text: content } = stripBom(raw);
       const originalEnding = detectLineEnding(content);
       const originalNormalized = normalizeToLF(content);
-      const resolved = resolveEditAnchors(toolEdits);
-      const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
-      const result = anchorResult.content;
+
+      let result: string;
+      let warnings: string[] | undefined;
+      let noopEdits:
+        | Array<{
+            editIndex: number;
+            loc: string;
+            currentContent: string;
+          }>
+        | undefined;
+      let firstChangedLine: number | undefined;
+      let compatibilityDetails: CompatibilityDetails | undefined;
+
+      if (toolEdits.length > 0) {
+        const resolved = resolveEditAnchors(toolEdits);
+        const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+        result = anchorResult.content;
+        warnings = anchorResult.warnings;
+        noopEdits = anchorResult.noopEdits;
+        firstChangedLine = anchorResult.firstChangedLine;
+      } else {
+        const replaced = applyExactUniqueLegacyReplace(
+          originalNormalized,
+          legacy!.oldText,
+          legacy!.newText,
+        );
+        result = replaced.content;
+        compatibilityDetails = {
+          used: true,
+          strategy: legacy!.strategy,
+          matchCount: replaced.matchCount,
+        };
+      }
 
       if (originalNormalized === result) {
         let diagnostic = `No changes made to ${path}. The edits produced identical content.`;
-        if (anchorResult.noopEdits?.length) {
+        if (noopEdits?.length) {
           diagnostic +=
             "\n" +
-            anchorResult.noopEdits
+            noopEdits
               .map(
                 (edit) =>
                   `Edit ${edit.editIndex}: replacement for ${edit.loc} is identical to current content:\n  ${edit.loc}: ${edit.currentContent}`,
               )
               .join("\n");
-          diagnostic +=
-            "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
         }
+        diagnostic +=
+          "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
         throw new Error(diagnostic);
       }
 
@@ -161,16 +233,16 @@ export function registerEditTool(pi: ExtensionAPI): void {
       );
 
       const diffResult = generateDiffString(originalNormalized, result);
-      const warnings = anchorResult.warnings?.length
-        ? `\n\nWarnings:\n${anchorResult.warnings.join("\n")}`
+      const warningsBlock = warnings?.length
+        ? `\n\nWarnings:\n${warnings.join("\n")}`
         : "";
 
       return {
-        content: [{ type: "text", text: `Updated ${path}${warnings}` }],
+        content: [{ type: "text", text: `Updated ${path}${warningsBlock}` }],
         details: {
           diff: diffResult.diff,
-          firstChangedLine:
-            anchorResult.firstChangedLine ?? diffResult.firstChangedLine,
+          firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
+          ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
         } as EditToolDetails,
       };
     },
