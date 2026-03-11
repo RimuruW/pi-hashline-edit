@@ -43,31 +43,59 @@ const hashlineEditItemSchema = Type.Object(
   { additionalProperties: false },
 );
 
-// Schema for tool registration (excludes legacy fields to hide compatibility from the model)
-const hashlineEditToolSchema = Type.Object(
+const hashlineEditBaseSchema = Type.Object(
   {
     path: Type.String({ description: "path" }),
-    edits: Type.Optional(
-      Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
-    ),
   },
   { additionalProperties: false },
 );
 
-// Full schema for internal validation (includes legacy fields for backward compatibility)
-const hashlineEditSchema = Type.Object(
-  {
-    path: Type.String({ description: "path" }),
-    edits: Type.Optional(
-      Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
-    ),
-    oldText: Type.Optional(Type.String()),
-    newText: Type.Optional(Type.String()),
-    old_text: Type.Optional(Type.String()),
-    new_text: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
+const hashlineLegacyCamelSchema = Type.Composite([
+  hashlineEditBaseSchema,
+  Type.Object(
+    {
+      oldText: Type.String(),
+      newText: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+const hashlineLegacySnakeSchema = Type.Composite([
+  hashlineEditBaseSchema,
+  Type.Object(
+    {
+      old_text: Type.String(),
+      new_text: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+const hashlineStructuredEditsSchema = Type.Composite([
+  hashlineEditBaseSchema,
+  Type.Object(
+    {
+      edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
+      oldText: Type.Optional(Type.String()),
+      newText: Type.Optional(Type.String()),
+      old_text: Type.Optional(Type.String()),
+      new_text: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+// Public schema for tool registration. Keep compatibility fields visible so
+// schema-driven callers can invoke the same fallback path that execute() accepts.
+const hashlineEditToolSchema = Type.Union([
+  hashlineStructuredEditsSchema,
+  hashlineLegacyCamelSchema,
+  hashlineLegacySnakeSchema,
+]);
+
+// Full schema for internal validation matches the public contract.
+const hashlineEditSchema = hashlineEditToolSchema;
 
 type EditRequestParams = Static<typeof hashlineEditSchema>;
 
