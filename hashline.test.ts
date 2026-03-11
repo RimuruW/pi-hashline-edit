@@ -199,6 +199,33 @@ describe("hashlineParseText", () => {
   });
 });
 
+describe("strict hashline contract", () => {
+  it("preserves internal spaces when hashing", () => {
+    expect(computeLineHash(1, "a b")).not.toBe(computeLineHash(1, "ab"));
+  });
+
+  it("trims trailing spaces when hashing", () => {
+    expect(computeLineHash(1, "value  ")).toBe(computeLineHash(1, "value"));
+  });
+
+  it("preserves explicit blank trailing line in array input", () => {
+    expect(hashlineParseText(["alpha", ""])).toEqual(["alpha", ""]);
+  });
+
+  it("rejects stale anchors instead of relocating by hash", () => {
+    const content = ["a", "INSERTED", "b", "target", "c"].join("\n");
+    const stale = {
+      op: "replace",
+      pos: { line: 3, hash: computeLineHash(3, "target") },
+      lines: ["updated"],
+    };
+
+    expect(() => applyHashlineEdits(content, [stale as any])).toThrow(
+      /changed since last read/,
+    );
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // resolveEditAnchors
 // ═══════════════════════════════════════════════════════════════════════════
