@@ -1,4 +1,4 @@
-import { chmod, stat } from "fs/promises";
+import { chmod, lstat, readFile, readlink, stat, symlink } from "fs/promises";
 import { describe, expect, it } from "bun:test";
 import { writeFileAtomically } from "../../src/fs-write";
 import { withTempFile } from "../support/fixtures";
@@ -12,6 +12,19 @@ describe("writeFileAtomically", () => {
 
       const fileStats = await stat(path);
       expect(fileStats.mode & 0o777).toBe(0o755);
+    });
+  });
+
+  it("updates a symlink target without replacing the symlink", async () => {
+    await withTempFile("target.txt", "before\n", async ({ cwd, path: targetPath }) => {
+      const linkPath = `${cwd}/linked.txt`;
+      await symlink("target.txt", linkPath);
+
+      await writeFileAtomically(linkPath, "after\n");
+
+      expect(await readFile(targetPath, "utf-8")).toBe("after\n");
+      expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await readlink(linkPath)).toBe("target.txt");
     });
   });
 });
