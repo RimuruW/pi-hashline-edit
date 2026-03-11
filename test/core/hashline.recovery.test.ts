@@ -169,9 +169,9 @@ describe("applyHashlineEdits — heuristics", () => {
     expect(result.warnings).toHaveLength(1);
   });
 
-  it("auto-corrects leading escaped tab indentation by default", () => {
+  it("auto-corrects escaped tab indentation only when anchored replace context already uses tabs", () => {
     const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
-    delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
 
     try {
       const content = "root\n\tchild\n\t\tvalue\nend";
@@ -188,6 +188,32 @@ describe("applyHashlineEdits — heuristics", () => {
       expect(result.warnings?.[0]).toContain(
         "Auto-corrected escaped tab indentation",
       );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+      } else {
+        process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = previous;
+      }
+    }
+  });
+
+  it("does not auto-correct leading escaped tab sequences that already match literal file content", () => {
+    const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
+
+    try {
+      const content = "root\n\\tchild\n\\t\\tvalue\nend";
+      const edits: HashlineEdit[] = [
+        {
+          op: "replace",
+          pos: makeTag(3, "\\t\\tvalue"),
+          lines: ["\\t\\treplaced"],
+        },
+      ];
+      const result = applyHashlineEdits(content, edits);
+
+      expect(result.content).toBe("root\n\\tchild\n\\t\\treplaced\nend");
+      expect(result.warnings).toBeUndefined();
     } finally {
       if (previous === undefined) {
         delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;

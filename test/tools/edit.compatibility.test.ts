@@ -130,6 +130,40 @@ describe("edit tool compatibility mode", () => {
     });
   });
 
+  it("matches multiline legacy oldText after normalizing CRLF and preserves CRLF output", async () => {
+    await withTempFile(
+      "sample.txt",
+      "alpha\r\nbeta\r\ngamma\r\n",
+      async ({ cwd, path }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const editTool = getTool("edit");
+
+        const result = await editTool.execute(
+          "e1",
+          {
+            path: "sample.txt",
+            oldText: "alpha\r\nbeta",
+            newText: "ALPHA\r\nBETA",
+          },
+          undefined,
+          undefined,
+          { cwd, hasUI: true, ui: { notify() {} } } as any,
+        );
+
+        expect(getText(result)).toContain("Updated sample.txt");
+        expect(result.details).toMatchObject({
+          compatibility: {
+            used: true,
+            strategy: "legacy-top-level-replace",
+            matchCount: 1,
+          },
+        });
+        expect(await readFile(path, "utf-8")).toBe("ALPHA\r\nBETA\r\ngamma\r\n");
+      },
+    );
+  });
+
   it("prefers strict hashline edits when edits is present", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();

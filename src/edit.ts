@@ -209,12 +209,14 @@ export function registerEditTool(pi: ExtensionAPI): void {
         noopEdits = anchorResult.noopEdits;
         firstChangedLine = anchorResult.firstChangedLine;
       } else {
-        // Normalize newText to LF before replacement to avoid \r\r\n corruption
-        // when restoreLineEndings is applied later
+        // Normalize legacy payload to LF before replacement so CRLF callers still
+        // match normalized file content, and so restoreLineEndings does not produce
+        // \r\r\n corruption on inserted multiline text.
+        const normalizedOldText = normalizeToLF(legacy!.oldText);
         const normalizedNewText = normalizeToLF(legacy!.newText);
         const replaced = applyExactUniqueLegacyReplace(
           originalNormalized,
-          legacy!.oldText,
+          normalizedOldText,
           normalizedNewText,
         );
         result = replaced.content;
