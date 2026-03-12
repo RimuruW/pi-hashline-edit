@@ -63,6 +63,7 @@ If the first selected line is too large to fit safely within the read budget, `r
 
 - **Stale Anchors Fail**: Mismatched hashes do not relocate. You must re-read the file and use the updated `LINE#HASH` references from the error snippet.
 - **No Substring Fallback**: Edits must use hash anchors instead of legacy free-text replacement modes.
+- **Hidden compatibility path**: When models omit `edits` and send a legacy top-level exact replace payload, the tool may adapt it internally only if the match is exact and unique. Compatibility use is surfaced to the interactive UI, not to the model.
 - **Atomic Application**: All edits in a single call validate against the same pre-edit snapshot and apply bottom-up to ensure line integrity.
 - **Whitespace-aware Hashing**: Internal spaces are significant; trailing spaces are ignored during hash computation.
 - **Display Prefix Stripping**: Automatically handles accidental inclusion of display prefixes (like `10#VR:`) copied from `read` output or diffs.

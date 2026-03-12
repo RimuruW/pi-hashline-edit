@@ -235,6 +235,7 @@ export type HashlineToolEdit = {
 };
 
 const MIN_AUTOCORRECT_LENGTH = 2;
+const LEADING_ESCAPED_TABS_RE = /^((?:\\t)+)/;
 
 function shouldAutocorrect(line: string, otherLine: string): boolean {
   if (!line || line !== otherLine) return false;
@@ -245,6 +246,95 @@ function shouldAutocorrect(line: string, otherLine: string): boolean {
   }
   return true;
 }
+
+function isEscapedTabAutocorrectEnabled(): boolean {
+  return process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS === "1";
+}
+
+function countLeadingTabs(line: string): number {
+  let count = 0;
+  while (line[count] === "\t") {
+    count++;
+  }
+  return count;
+}
+
+function maybeAutocorrectEscapedTabIndentation(
+  edits: HashlineEdit[],
+  warnings: string[],
+  fileLines: string[],
+): void {
+  if (!isEscapedTabAutocorrectEnabled()) {
+    return;
+  }
+
+  for (const edit of edits) {
+    if (edit.op !== "replace" || edit.lines.length === 0) {
+      continue;
+    }
+
+    const hasEscapedTabs = edit.lines.some((line) => line.includes("\\t"));
+    if (!hasEscapedTabs) {
+      continue;
+    }
+
+    const hasRealTabs = edit.lines.some((line) => line.includes("\t"));
+    if (hasRealTabs) {
+      continue;
+    }
+
+    const targetStart = edit.pos.line - 1;
+    const targetCount = edit.end ? edit.end.line - edit.pos.line + 1 : 1;
+    if (targetCount !== edit.lines.length) {
+      continue;
+    }
+
+    let correctedCount = 0;
+    edit.lines = edit.lines.map((line, index) => {
+      const match = line.match(LEADING_ESCAPED_TABS_RE);
+      if (!match) {
+        return line;
+      }
+
+      const escapedTabs = match[1]!;
+      const tabCount = escapedTabs.length / 2;
+      const targetLine = fileLines[targetStart + index];
+      if (!targetLine) {
+        return line;
+      }
+
+      // Only recover escaped indentation when the anchored line being replaced
+      // already uses the same leading tab depth. If file content itself begins
+      // with literal "\t", preserve it verbatim.
+      if (countLeadingTabs(targetLine) !== tabCount || targetLine.startsWith(escapedTabs)) {
+        return line;
+      }
+
+      correctedCount += tabCount;
+      return "\t".repeat(tabCount) + line.slice(escapedTabs.length);
+    });
+
+    if (correctedCount > 0) {
+      warnings.push(
+        "Auto-corrected escaped tab indentation in anchored replace edit: converted leading \\t sequence(s) where the replaced file content already used matching real tab indentation",
+      );
+    }
+  }
+}
+
+function maybeWarnSuspiciousUnicodeEscapePlaceholder(
+  edits: HashlineEdit[],
+  warnings: string[],
+): void {
+  for (const edit of edits) {
+    if (edit.lines.some((line) => /\\uDDDD/i.test(line))) {
+      warnings.push(
+        "Detected literal \\uDDDD in edit content; no autocorrection applied. Verify whether this should be a real Unicode escape or plain text.",
+      );
+    }
+  }
+}
+
 export function applyHashlineEdits(
   content: string,
   edits: HashlineEdit[],
@@ -317,6 +407,9 @@ export function applyHashlineEdits(
   }
   if (mismatches.length)
     throw new Error(formatMismatchError(mismatches, fileLines));
+
+  maybeAutocorrectEscapedTabIndentation(edits, warnings, fileLines);
+  maybeWarnSuspiciousUnicodeEscapePlaceholder(edits, warnings);
 
   // Deduplicate identical edits
   const seenEditKeys = new Map<string, number>();
