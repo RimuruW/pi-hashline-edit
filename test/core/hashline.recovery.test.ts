@@ -18,7 +18,7 @@ describe("applyHashlineEdits — error handling", () => {
     const edits: HashlineEdit[] = [
       { op: "replace", pos: { line: 2, hash: "XX" }, lines: ["BBB"] },
     ];
-    expect(() => applyHashlineEdits(content, edits)).toThrow(/changed since last read/);
+    expect(() => applyHashlineEdits(content, edits)).toThrow(/1 stale anchor\./);
   });
 
   it("throws on out-of-range line", () => {
@@ -48,10 +48,10 @@ describe("applyHashlineEdits — error handling", () => {
       { op: "replace", pos: { line: 1, hash: "XX" }, lines: ["A"] },
       { op: "replace", pos: { line: 3, hash: "YY" }, lines: ["C"] },
     ];
-    expect(() => applyHashlineEdits(content, edits)).toThrow(/2 lines have changed/);
+    expect(() => applyHashlineEdits(content, edits)).toThrow(/2 stale anchors\./);
   });
 
-  it("mismatch message includes same-line current anchors without relocation", () => {
+  it("mismatch message exposes retryable >>> LINE#HASH snippets", () => {
     expect(() =>
       applyHashlineEdits("aaa", [
         {
@@ -60,7 +60,7 @@ describe("applyHashlineEdits — error handling", () => {
           lines: ["bbb"],
         } as any,
       ]),
-    ).toThrow(/Current anchors:\n1#ZZ -> 1#[A-Z]{2}/);
+    ).toThrow(/>>> 1#[A-Z]{2}:aaa/);
   });
 });
 

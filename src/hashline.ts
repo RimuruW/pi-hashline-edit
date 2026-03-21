@@ -153,7 +153,7 @@ function formatMismatchError(
 
   const sorted = [...displayLines].sort((a, b) => a - b);
   const out: string[] = [
-    `${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} changed since last read. Use the updated LINE#HASH references shown below (>>> marks changed lines).`,
+    `${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines.`,
     "",
   ];
 
@@ -169,12 +169,6 @@ function formatMismatchError(
         ? `>>> ${prefix}:${content}`
         : `    ${prefix}:${content}`,
     );
-  }
-
-  const sortedMismatches = [...mismatches].sort((a, b) => a.line - b.line);
-  out.push("", "Current anchors:");
-  for (const mismatch of sortedMismatches) {
-    out.push(`${mismatch.line}#${mismatch.expected} -> ${mismatch.line}#${mismatch.actual}`);
   }
 
   return out.join("\n");

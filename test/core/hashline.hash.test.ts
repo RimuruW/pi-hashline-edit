@@ -53,7 +53,7 @@ describe("strict hashline contract", () => {
     };
 
     expect(() => applyHashlineEdits(content, [stale as any])).toThrow(
-      /changed since last read/,
+      /1 stale anchor\./,
     );
   });
 });

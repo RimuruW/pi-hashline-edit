@@ -40,7 +40,7 @@ Examples:
 </rules>
 
 <recovery>
-**Tag mismatch (`>>>`)**: retry with the updated `LINE#HASH` references from the error snippet. If needed, re-read the file and make a smaller edit.
+**Tag mismatch (`>>>`)**: retry using the `>>> LINE#HASH:content` lines from the error snippet. If needed, re-read the file and make a smaller edit.
 **Diff preview hashes**: hashes shown on unchanged and added diff lines are hints for immediate re-edit. Re-read if the file may have been modified by other processes.
 **No-op (`identical`)**: do not resubmit unchanged content. Re-read and change actual file content.
 </recovery>
