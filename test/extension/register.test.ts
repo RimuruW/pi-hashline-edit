@@ -1,18 +1,22 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import register from "../../index";
 
 describe("extension registration", () => {
-  it("registers only read and edit tools", () => {
-    const names: string[] = [];
+  it("registers read/edit tools and compatibility lifecycle hooks", () => {
+    const toolNames: string[] = [];
+    const eventNames: string[] = [];
     const pi = {
       registerTool(tool: { name: string }) {
-        names.push(tool.name);
+        toolNames.push(tool.name);
       },
-      on() {},
+      on(name: string) {
+        eventNames.push(name);
+      },
     } as any;
 
     register(pi);
 
-    expect(names.sort()).toEqual(["edit", "read"]);
+    expect(toolNames.sort()).toEqual(["edit", "read"]);
+    expect(eventNames.sort()).toEqual(["tool_result", "turn_end", "turn_start"]);
   });
 });

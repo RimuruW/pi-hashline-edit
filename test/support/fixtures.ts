@@ -1,13 +1,19 @@
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+
+async function getWritableTempRoot(): Promise<string> {
+  const fallback = join(process.cwd(), ".tmp");
+  await mkdir(fallback, { recursive: true });
+  return fallback;
+}
 
 export async function withTempFile(
   name: string,
   content: string,
   run: (args: { cwd: string; path: string }) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(join(tmpdir(), "pi-hashline-test-"));
+  const tempRoot = await getWritableTempRoot();
+  const cwd = await mkdtemp(join(tempRoot, "pi-hashline-test-"));
   const path = join(cwd, name);
   try {
     await writeFile(path, content, "utf-8");

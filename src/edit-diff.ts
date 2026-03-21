@@ -304,3 +304,109 @@ export function generateDiffString(
 
   return { diff: output.join("\n"), firstChangedLine };
 }
+
+export interface CompactHashlineDiffPreview {
+  preview: string;
+  addedLines: number;
+  removedLines: number;
+}
+
+type DiffPreviewKind = "context" | "addition" | "deletion";
+
+function classifyDiffPreviewLine(line: string): DiffPreviewKind | null {
+  if (line.startsWith("+")) return "addition";
+  if (line.startsWith("-")) return "deletion";
+  if (line.startsWith(" ")) return "context";
+  return null;
+}
+
+function summarizeOmitted(count: number, label: string): string {
+  return `... ${count} more ${label} line${count === 1 ? "" : "s"}`;
+}
+
+function collapseDiffPreviewRun(
+  lines: string[],
+  maxVisible: number,
+  label: string,
+): string[] {
+  if (lines.length <= maxVisible) {
+    return lines;
+  }
+
+  return [
+    ...lines.slice(0, maxVisible),
+    summarizeOmitted(lines.length - maxVisible, label),
+  ];
+}
+
+export function buildCompactHashlineDiffPreview(
+  diff: string,
+  options: {
+    maxUnchangedRun?: number;
+    maxAdditionRun?: number;
+    maxDeletionRun?: number;
+    maxOutputLines?: number;
+  } = {},
+): CompactHashlineDiffPreview {
+  const {
+    maxUnchangedRun = 2,
+    maxAdditionRun = 4,
+    maxDeletionRun = 4,
+    maxOutputLines = 12,
+  } = options;
+
+  if (!diff.trim()) {
+    return { preview: "", addedLines: 0, removedLines: 0 };
+  }
+
+  const lines = diff.split("\n").filter((line) => line.length > 0);
+  const previewLines: string[] = [];
+  let addedLines = 0;
+  let removedLines = 0;
+
+  for (let index = 0; index < lines.length; ) {
+    const kind = classifyDiffPreviewLine(lines[index]!);
+    let end = index + 1;
+    while (end < lines.length && classifyDiffPreviewLine(lines[end]!) === kind) {
+      end += 1;
+    }
+
+    const run = lines.slice(index, end);
+    switch (kind) {
+      case "addition":
+        addedLines += run.length;
+        previewLines.push(...collapseDiffPreviewRun(run, maxAdditionRun, "added"));
+        break;
+      case "deletion":
+        removedLines += run.length;
+        previewLines.push(...collapseDiffPreviewRun(run, maxDeletionRun, "removed"));
+        break;
+      case "context":
+        previewLines.push(...collapseDiffPreviewRun(run, maxUnchangedRun, "unchanged"));
+        break;
+      default:
+        previewLines.push(...run);
+        break;
+    }
+
+    index = end;
+  }
+
+  if (previewLines.length > maxOutputLines) {
+    const visibleLines = previewLines.slice(0, maxOutputLines);
+    visibleLines.push(
+      summarizeOmitted(previewLines.length - maxOutputLines, "preview"),
+    );
+    return {
+      preview: visibleLines.join("\n"),
+      addedLines,
+      removedLines,
+    };
+  }
+
+  return {
+    preview: previewLines.join("\n"),
+    addedLines,
+    removedLines,
+  };
+}

@@ -168,6 +168,75 @@ describe("applyHashlineEdits — heuristics", () => {
     expect(result.content).toBe("}\nfunction foo() {\n  baz();\n}");
     expect(result.warnings).toHaveLength(1);
   });
+
+  it("auto-corrects escaped tab indentation only when anchored replace context already uses tabs", () => {
+    const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
+
+    try {
+      const content = "root\n\tchild\n\t\tvalue\nend";
+      const edits: HashlineEdit[] = [
+        {
+          op: "replace",
+          pos: makeTag(3, "\t\tvalue"),
+          lines: ["\\t\\treplaced"],
+        },
+      ];
+      const result = applyHashlineEdits(content, edits);
+
+      expect(result.content).toBe("root\n\tchild\n\t\treplaced\nend");
+      expect(result.warnings?.[0]).toContain(
+        "Auto-corrected escaped tab indentation",
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+      } else {
+        process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = previous;
+      }
+    }
+  });
+
+  it("does not auto-correct leading escaped tab sequences that already match literal file content", () => {
+    const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
+
+    try {
+      const content = "root\n\\tchild\n\\t\\tvalue\nend";
+      const edits: HashlineEdit[] = [
+        {
+          op: "replace",
+          pos: makeTag(3, "\\t\\tvalue"),
+          lines: ["\\t\\treplaced"],
+        },
+      ];
+      const result = applyHashlineEdits(content, edits);
+
+      expect(result.content).toBe("root\n\\tchild\n\\t\\treplaced\nend");
+      expect(result.warnings).toBeUndefined();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
+      } else {
+        process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = previous;
+      }
+    }
+  });
+
+  it("warns on literal \\uDDDD without changing content", () => {
+    const content = "aaa\nbbb\nccc";
+    const edits: HashlineEdit[] = [
+      {
+        op: "replace",
+        pos: makeTag(2, "bbb"),
+        lines: ["\\uDDDD"],
+      },
+    ];
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("aaa\n\\uDDDD\nccc");
+    expect(result.warnings?.[0]).toContain("Detected literal \\uDDDD");
+  });
 });
 
 describe("integration: resolveEditAnchors → applyHashlineEdits", () => {

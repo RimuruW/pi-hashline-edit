@@ -1,0 +1,22 @@
+Fix the latest codex review findings on feature/hashline-compat-hardening.
+
+Constraints:
+- Follow the supervised loop strictly: fix -> focused tests -> one conventional commit.
+- Do not push.
+- After committing, stop at the result screen; do not start codex review yourself.
+
+Current review findings to fix:
+1. P1 in src/edit.ts
+   The registered tool schema currently only allows path/edits with additionalProperties: false, so legacy calls like { path, oldText, newText } are rejected by schema validation before execute() can apply the hidden compatibility fallback. Fix this so normal Pi CLI/SDK runtime can still accept the intended legacy compatibility path.
+
+2. P2 in src/edit.ts
+   edits was made optional in the published schema, which allows { path: "file.ts" } to validate but then fail at runtime with "No edits provided." Do not leave a schema-valid-but-guaranteed-runtime-fail shape. Keep the public contract tight.
+
+Requirements:
+- Preserve the intended hidden compatibility behavior for legacy callers.
+- Avoid exposing a loose schema that invites invalid calls.
+- Prefer the minimal patch that satisfies both findings.
+- Add/update focused tests.
+- Commit with a conventional commit message.
+
+When done, show a concise summary including what changed, tests run, and the commit hash.
