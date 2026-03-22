@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { assertEditRequest, registerEditTool } from "../../src/edit";
+import Ajv from "ajv";
+import { assertEditRequest, hashlineEditToolSchema, registerEditTool } from "../../src/edit";
 
 describe("assertEditRequest", () => {
   it("rejects unknown or unsupported root fields", () => {
@@ -54,7 +55,59 @@ describe("assertEditRequest", () => {
 });
 
 describe("registerEditTool", () => {
-  it("publishes only the strict public hashline schema", () => {
+  it("publishes a schema that validates strict hashline payloads", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile(hashlineEditToolSchema as any);
+
+    expect(
+      validate({
+        path: "a.ts",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+      }),
+    ).toBeTrue();
+  });
+
+  it("publishes a schema that validates camelCase legacy payloads", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile(hashlineEditToolSchema as any);
+
+    expect(
+      validate({
+        path: "a.ts",
+        oldText: "before",
+        newText: "after",
+      }),
+    ).toBeTrue();
+  });
+
+  it("publishes a schema that validates snake_case legacy payloads", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile(hashlineEditToolSchema as any);
+
+    expect(
+      validate({
+        path: "a.ts",
+        old_text: "before",
+        new_text: "after",
+      }),
+    ).toBeTrue();
+  });
+
+  it("publishes a schema that still accepts strict edits when legacy fields are also present", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile(hashlineEditToolSchema as any);
+
+    expect(
+      validate({
+        path: "a.ts",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        oldText: "before",
+        newText: "after",
+      }),
+    ).toBeTrue();
+  });
+
+  it("registers the same union schema publicly", () => {
     let registered: { parameters?: any } | undefined;
     const pi = {
       registerTool(tool: { parameters?: any }) {
@@ -64,15 +117,6 @@ describe("registerEditTool", () => {
 
     registerEditTool(pi);
 
-    expect(registered?.parameters).toBeDefined();
-    expect(registered!.parameters.type).toBe("object");
-    expect(Object.keys(registered!.parameters.properties)).toEqual(["path", "edits"]);
-    expect(registered!.parameters.required).toEqual(["path", "edits"]);
-    expect(registered!.parameters.additionalProperties).toBeUndefined();
-    expect(registered!.parameters.properties.edits).toBeDefined();
-    expect(registered!.parameters.properties.oldText).toBeUndefined();
-    expect(registered!.parameters.properties.newText).toBeUndefined();
-    expect(registered!.parameters.properties.old_text).toBeUndefined();
-    expect(registered!.parameters.properties.new_text).toBeUndefined();
+    expect(registered?.parameters).toEqual(hashlineEditToolSchema);
   });
 });

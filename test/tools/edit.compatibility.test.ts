@@ -278,7 +278,7 @@ describe("registered schema accepts legacy payloads", () => {
       register(pi);
       const editTool = getTool("edit");
 
-      // This would fail schema validation if P1 not fixed
+      // Public schema now accepts this legacy payload; execute should preserve the same behavior.
       const result = await editTool.execute(
         "e1",
         { path: "sample.txt", oldText: "world", newText: "universe" },

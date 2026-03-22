@@ -7,6 +7,9 @@ describe("formatHashlineReadPreview", () => {
     const result = formatHashlineReadPreview(longLine, { offset: 1 });
 
     expect(result.text).toContain("Hashline output requires full lines");
+    expect(result.truncation?.truncated).toBeTrue();
+    expect(result.truncation?.truncatedBy).toBe("bytes");
+    expect(result.truncation?.firstLineExceedsLimit).toBeTrue();
   });
 
   it("formats ordinary lines as full hashlines", () => {
