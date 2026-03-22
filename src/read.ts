@@ -4,15 +4,19 @@ import {
   formatSize,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
+  truncateHead,
+  type TruncationResult,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { readFileSync } from "fs";
 import {
   access as fsAccess,
+  open as fsOpen,
   readFile as fsReadFile,
   stat as fsStat,
 } from "fs/promises";
 import { constants } from "fs";
+import { fileTypeFromBuffer } from "file-type";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { computeLineHash } from "./hashline";
 import { resolveToCwd } from "./path-utils";
@@ -26,17 +30,27 @@ const READ_DESC = readFileSync(
   .replaceAll("{{DEFAULT_MAX_BYTES}}", formatSize(DEFAULT_MAX_BYTES))
   .trim();
 
-type ReadPreviewTruncation = {
-  truncated: boolean;
-  outputLines: number;
-  outputBytes: number;
-  totalLines: number;
-  totalBytes: number;
-  reason?: "oversized-first-line";
-};
+const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const FILE_TYPE_SNIFF_BYTES = 4100;
 
-function byteLength(text: string): number {
-  return Buffer.byteLength(text, "utf8");
+async function detectSupportedImageMimeType(filePath: string): Promise<string | null> {
+  const fileHandle = await fsOpen(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(FILE_TYPE_SNIFF_BYTES);
+    const { bytesRead } = await fileHandle.read(buffer, 0, FILE_TYPE_SNIFF_BYTES, 0);
+    if (bytesRead === 0) {
+      return null;
+    }
+
+    const fileType = await fileTypeFromBuffer(buffer.subarray(0, bytesRead));
+    if (!fileType || !IMAGE_MIME_TYPES.has(fileType.mime)) {
+      return null;
+    }
+
+    return fileType.mime;
+  } finally {
+    await fileHandle.close();
+  }
 }
 
 function normalizePositiveInteger(
@@ -57,7 +71,7 @@ function normalizePositiveInteger(
 export function formatHashlineReadPreview(
   text: string,
   options: { offset?: number; limit?: number },
-): { text: string; truncation?: ReadPreviewTruncation } {
+): { text: string; truncation?: TruncationResult } {
   const allLines = text.split("\n");
   const totalLines = allLines.length;
   const startLine = normalizePositiveInteger(options.offset, "offset") ?? 1;
@@ -70,68 +84,43 @@ export function formatHashlineReadPreview(
       text: `Offset ${startLine} is beyond end of file (${totalLines} lines total). ${suggestion}`,
     };
   }
+
   const limit = normalizePositiveInteger(options.limit, "limit");
   const endIdx = limit
     ? Math.min(startLine - 1 + limit, totalLines)
     : totalLines;
   const selected = allLines.slice(startLine - 1, endIdx);
-  const formattedLines = selected.map((line, index) => {
-    const lineNumber = startLine + index;
-    return `${lineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
-  });
+  const formatted = selected
+    .map((line, index) => {
+      const lineNumber = startLine + index;
+      return `${lineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
+    })
+    .join("\n");
 
-  const totalFormatted = formattedLines.join("\n");
-  const totalBytes = byteLength(totalFormatted);
-  const firstFormattedLine = formattedLines[0];
-  if (
-    firstFormattedLine !== undefined &&
-    byteLength(firstFormattedLine) > DEFAULT_MAX_BYTES
-  ) {
+  const truncation = truncateHead(formatted);
+  if (truncation.firstLineExceedsLimit) {
     return {
-      text: `[Line ${startLine} exceeds ${formatSize(DEFAULT_MAX_BYTES)}. Hashline output requires full lines; cannot compute hashes for a truncated preview.]`,
-      truncation: {
-        truncated: true,
-        outputLines: 0,
-        outputBytes: 0,
-        totalLines,
-        totalBytes,
-        reason: "oversized-first-line",
-      },
+      text: `[Line ${startLine} exceeds ${formatSize(truncation.maxBytes)}. Hashline output requires full lines; cannot compute hashes for a truncated preview.]`,
+      truncation,
     };
   }
 
-  const outputLines: string[] = [];
-  let outputBytes = 0;
-  for (const line of formattedLines) {
-    if (outputLines.length >= DEFAULT_MAX_LINES) break;
-
-    const chunk = outputLines.length === 0 ? line : `\n${line}`;
-    const chunkBytes = byteLength(chunk);
-    if (outputBytes + chunkBytes > DEFAULT_MAX_BYTES) break;
-
-    outputLines.push(line);
-    outputBytes += chunkBytes;
-  }
-
-  let preview = outputLines.join("\n");
-  const truncated = outputLines.length < formattedLines.length;
-  if (truncated) {
-    preview += `\n\n[Output truncated: showing ${outputLines.length} of ${totalLines} lines (${formatSize(outputBytes)} of ${formatSize(totalBytes)}). Use offset=${startLine + outputLines.length} to continue.]`;
+  let preview = truncation.content;
+  if (truncation.truncated) {
+    const endLineDisplay = startLine + truncation.outputLines - 1;
+    const nextOffset = endLineDisplay + 1;
+    if (truncation.truncatedBy === "lines") {
+      preview += `\n\n[Showing lines ${startLine}-${endLineDisplay} of ${totalLines}. Use offset=${nextOffset} to continue.]`;
+    } else {
+      preview += `\n\n[Showing lines ${startLine}-${endLineDisplay} of ${totalLines} (${formatSize(truncation.maxBytes)} limit). Use offset=${nextOffset} to continue.]`;
+    }
   } else if (endIdx < totalLines) {
     preview += `\n\n[Showing lines ${startLine}-${endIdx} of ${totalLines}. Use offset=${endIdx + 1} to continue.]`;
   }
 
   return {
     text: preview,
-    truncation: truncated
-      ? {
-          truncated: true,
-          outputLines: outputLines.length,
-          outputBytes,
-          totalLines,
-          totalBytes,
-        }
-      : undefined,
+    truncation: truncation.truncated ? truncation : undefined,
   };
 }
 
@@ -159,7 +148,7 @@ export function registerReadTool(pi: ExtensionAPI): void {
     }),
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const rawPath = params.path.replace(/^@/, "");
+      const rawPath = params.path;
       const absolutePath = resolveToCwd(rawPath, ctx.cwd);
 
       throwIfAborted(signal);
@@ -194,8 +183,8 @@ export function registerReadTool(pi: ExtensionAPI): void {
       }
 
       throwIfAborted(signal);
-      const ext = rawPath.split(".").pop()?.toLowerCase() ?? "";
-      if (["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].includes(ext)) {
+      const mimeType = await detectSupportedImageMimeType(absolutePath);
+      if (mimeType) {
         const builtinRead = createReadTool(ctx.cwd);
         return builtinRead.execute(_toolCallId, params, signal, _onUpdate);
       }

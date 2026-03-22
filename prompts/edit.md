@@ -11,11 +11,10 @@ You **MUST NOT** use this tool for formatting-only edits: reindenting, realignin
 </prohibited>
 
 <contract>
-Payload shape: `{ path, edits }`
+Preferred payload shape: `{ path, edits }`
 - `path`: target file path
 - `edits`: array of strict hashline edit operations
-- No extra root keys
-- No legacy search override, destructive file operations, or substring replacement fields
+- Use this structured anchored form whenever possible
 </contract>
 
 <operations>
@@ -38,7 +37,7 @@ Examples:
 1. `end` is inclusive.
 2. Copy indentation exactly from fresh `read` output.
 3. `lines` must be literal file content; do not include hashline prefixes unless copied accidentally.
-4. Extra keys are invalid.
+4. Extra keys inside edit items are invalid.
 </rules>
 
 <recovery>

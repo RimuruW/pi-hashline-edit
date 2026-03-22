@@ -1,6 +1,5 @@
 import type { EditToolDetails, ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { Static } from "@sinclair/typebox";
 import { constants } from "fs";
 import { readFileSync } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
@@ -65,15 +64,10 @@ const hashlineEditItemSchema = Type.Union([
   prependEditItemSchema,
 ]);
 
-export const hashlineEditToolSchema = Type.Object({
-  path: Type.String({ description: "path" }),
-  edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
-});
-
-const hashlineEditSchema = Type.Object(
+const strictHashlineEditToolSchema = Type.Object(
   {
-    path: Type.String(),
-    edits: Type.Optional(Type.Array(hashlineEditItemSchema)),
+    path: Type.String({ description: "path" }),
+    edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     oldText: Type.Optional(Type.String()),
     newText: Type.Optional(Type.String()),
     old_text: Type.Optional(Type.String()),
@@ -82,7 +76,40 @@ const hashlineEditSchema = Type.Object(
   { additionalProperties: false },
 );
 
-type EditRequestParams = Static<typeof hashlineEditSchema>;
+const legacyCamelEditToolSchema = Type.Object(
+  {
+    path: Type.String({ description: "path" }),
+    edits: Type.Optional(Type.Array(hashlineEditItemSchema)),
+    oldText: Type.String(),
+    newText: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+const legacySnakeEditToolSchema = Type.Object(
+  {
+    path: Type.String({ description: "path" }),
+    edits: Type.Optional(Type.Array(hashlineEditItemSchema)),
+    old_text: Type.String(),
+    new_text: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+export const hashlineEditToolSchema = Type.Union([
+  strictHashlineEditToolSchema,
+  legacyCamelEditToolSchema,
+  legacySnakeEditToolSchema,
+]);
+
+type EditRequestParams = {
+  path: string;
+  edits?: HashlineToolEdit[];
+  oldText?: string;
+  newText?: string;
+  old_text?: string;
+  new_text?: string;
+};
 
 type CompatibilityDetails = {
   used: true;
@@ -222,8 +249,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       assertEditRequest(params);
 
-      const rawPath = params.path;
-      const path = rawPath.replace(/^@/, "");
+      const path = params.path;
       const absolutePath = resolveToCwd(path, ctx.cwd);
       const toolEdits = Array.isArray(params.edits)
         ? (params.edits as HashlineToolEdit[])
