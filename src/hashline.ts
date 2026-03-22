@@ -150,9 +150,12 @@ export function parseLineRef(ref: string): { line: number; hash: string } {
 function formatMismatchError(
   mismatches: HashMismatch[],
   fileLines: string[],
+  retryLines: ReadonlySet<number> = new Set<number>(),
 ): string {
-  const mismatchSet = new Map<number, HashMismatch>();
-  for (const m of mismatches) mismatchSet.set(m.line, m);
+  const retryLineSet = new Set<number>(retryLines);
+  for (const m of mismatches) {
+    retryLineSet.add(m.line);
+  }
 
   const displayLines = new Set<number>();
   for (const m of mismatches) {
@@ -164,10 +167,13 @@ function formatMismatchError(
       displayLines.add(i);
     }
   }
+  for (const line of retryLineSet) {
+    displayLines.add(line);
+  }
 
   const sorted = [...displayLines].sort((a, b) => a - b);
   const out: string[] = [
-    `${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines.`,
+    `${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
     "",
   ];
 
@@ -179,7 +185,7 @@ function formatMismatchError(
     const hash = computeLineHash(num, content);
     const prefix = `${num}#${hash}`;
     out.push(
-      mismatchSet.has(num)
+      retryLineSet.has(num)
         ? `>>> ${prefix}:${content}`
         : `    ${prefix}:${content}`,
     );
@@ -444,6 +450,7 @@ export function applyHashlineEdits(
 
   // Validate all refs before mutation
   const mismatches: HashMismatch[] = [];
+  const retryLines = new Set<number>();
   function validate(ref: Anchor): boolean {
     if (ref.line < 1 || ref.line > fileLines.length) {
       throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
@@ -451,6 +458,7 @@ export function applyHashlineEdits(
     const actual = computeLineHash(ref.line, fileLines[ref.line - 1]);
     if (actual === ref.hash) return true;
     mismatches.push({ line: ref.line, expected: ref.hash, actual });
+    retryLines.add(ref.line);
     return false;
   }
 
@@ -467,6 +475,12 @@ export function applyHashlineEdits(
           }
           const startOk = validate(edit.pos);
           const endOk = validate(edit.end);
+          if (!startOk && endOk) {
+            retryLines.add(edit.end.line);
+          }
+          if (startOk && !endOk) {
+            retryLines.add(edit.pos.line);
+          }
           if (!startOk || !endOk) continue;
         } else {
           if (!validate(edit.pos)) continue;
@@ -494,7 +508,7 @@ export function applyHashlineEdits(
     }
   }
   if (mismatches.length)
-    throw new Error(formatMismatchError(mismatches, fileLines));
+    throw new Error(formatMismatchError(mismatches, fileLines, retryLines));
 
   maybeAutocorrectEscapedTabIndentation(edits, warnings, fileLines);
   maybeWarnSuspiciousUnicodeEscapePlaceholder(edits, warnings);

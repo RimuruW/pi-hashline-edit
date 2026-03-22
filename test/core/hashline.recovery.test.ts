@@ -62,6 +62,30 @@ describe("applyHashlineEdits — error handling", () => {
       ]),
     ).toThrow(/>>> 1#[A-Z]{2}:aaa/);
   });
+
+  it("retains still-valid range endpoints in retry snippets", () => {
+    const content = "aaa\nbbb\nccc\nddd\neee";
+    const validEnd = makeTag(5, "eee");
+
+    try {
+      applyHashlineEdits(content, [
+        {
+          op: "replace",
+          pos: { line: 1, hash: "ZZ" },
+          end: validEnd,
+          lines: ["AAA"],
+        },
+      ]);
+      throw new Error("Expected applyHashlineEdits to throw for stale range anchor.");
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      expect(error.message).toContain(
+        `>>> ${validEnd.line}#${validEnd.hash}:eee`,
+      );
+    }
+  });
 });
 
 // Only explicit input cleanup plus this boundary-duplicate correction remain as
