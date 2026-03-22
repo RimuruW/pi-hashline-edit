@@ -39,13 +39,28 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+function normalizePositiveInteger(
+  value: number | undefined,
+  name: "offset" | "limit",
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`Read request field "${name}" must be a positive integer.`);
+  }
+
+  return value;
+}
+
 export function formatHashlineReadPreview(
   text: string,
   options: { offset?: number; limit?: number },
 ): { text: string; truncation?: ReadPreviewTruncation } {
   const allLines = text.split("\n");
   const totalLines = allLines.length;
-  const startLine = options.offset ? Math.max(1, options.offset) : 1;
+  const startLine = normalizePositiveInteger(options.offset, "offset") ?? 1;
   if (startLine > totalLines) {
     const suggestion =
       totalLines === 0
@@ -55,8 +70,9 @@ export function formatHashlineReadPreview(
       text: `Offset ${startLine} is beyond end of file (${totalLines} lines total). ${suggestion}`,
     };
   }
-  const endIdx = options.limit
-    ? Math.min(startLine - 1 + options.limit, totalLines)
+  const limit = normalizePositiveInteger(options.limit, "limit");
+  const endIdx = limit
+    ? Math.min(startLine - 1 + limit, totalLines)
     : totalLines;
   const selected = allLines.slice(startLine - 1, endIdx);
   const formattedLines = selected.map((line, index) => {
@@ -129,12 +145,16 @@ export function registerReadTool(pi: ExtensionAPI): void {
         description: "Path to the file to read (relative or absolute)",
       }),
       offset: Type.Optional(
-        Type.Number({
+        Type.Integer({
+          minimum: 1,
           description: "Line number to start reading from (1-indexed)",
         }),
       ),
       limit: Type.Optional(
-        Type.Number({ description: "Maximum number of lines to read" }),
+        Type.Integer({
+          minimum: 1,
+          description: "Maximum number of lines to read",
+        }),
       ),
     }),
 

@@ -25,23 +25,45 @@ import {
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 
-function StringEnum<T extends string[]>(values: [...T]) {
-  return Type.Unsafe<T[number]>({ type: "string", enum: values });
-}
+const hashlineEditLinesSchema = Type.Union([
+  Type.Array(Type.String(), { description: "content (preferred format)" }),
+  Type.String(),
+  Type.Null(),
+]);
 
-const hashlineEditItemSchema = Type.Object(
+const replaceEditItemSchema = Type.Object(
   {
-    op: StringEnum(["replace", "append", "prepend"]),
-    pos: Type.Optional(Type.String({ description: "anchor" })),
+    op: Type.Literal("replace"),
+    pos: Type.String({ description: "anchor" }),
     end: Type.Optional(Type.String({ description: "limit position" })),
-    lines: Type.Union([
-      Type.Array(Type.String(), { description: "content (preferred format)" }),
-      Type.String(),
-      Type.Null(),
-    ]),
+    lines: hashlineEditLinesSchema,
   },
   { additionalProperties: false },
 );
+
+const appendEditItemSchema = Type.Object(
+  {
+    op: Type.Literal("append"),
+    pos: Type.Optional(Type.String({ description: "anchor" })),
+    lines: hashlineEditLinesSchema,
+  },
+  { additionalProperties: false },
+);
+
+const prependEditItemSchema = Type.Object(
+  {
+    op: Type.Literal("prepend"),
+    pos: Type.Optional(Type.String({ description: "anchor" })),
+    lines: hashlineEditLinesSchema,
+  },
+  { additionalProperties: false },
+);
+
+const hashlineEditItemSchema = Type.Union([
+  replaceEditItemSchema,
+  appendEditItemSchema,
+  prependEditItemSchema,
+]);
 
 export const hashlineEditToolSchema = Type.Object({
   path: Type.String({ description: "path" }),
@@ -83,6 +105,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasOwn(request: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(request, key);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 export function assertEditRequest(request: unknown): asserts request is EditRequestParams {
@@ -143,6 +169,44 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
     if (unknownItemKeys.length > 0) {
       throw new Error(
         `Edit ${index} contains unknown or unsupported fields: ${unknownItemKeys.join(", ")}.`,
+      );
+    }
+
+    if (typeof edit.op !== "string") {
+      throw new Error(`Edit ${index} requires an "op" string.`);
+    }
+    if (edit.op !== "replace" && edit.op !== "append" && edit.op !== "prepend") {
+      throw new Error(
+        `Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", or "prepend".`,
+      );
+    }
+
+    if (hasOwn(edit, "pos") && typeof edit.pos !== "string") {
+      throw new Error(`Edit ${index} field "pos" must be a string when provided.`);
+    }
+    if (hasOwn(edit, "end") && typeof edit.end !== "string") {
+      throw new Error(`Edit ${index} field "end" must be a string when provided.`);
+    }
+    if (!hasOwn(edit, "lines")) {
+      throw new Error(`Edit ${index} requires a "lines" field.`);
+    }
+    if (
+      edit.lines !== null &&
+      typeof edit.lines !== "string" &&
+      !isStringArray(edit.lines)
+    ) {
+      throw new Error(
+        `Edit ${index} field "lines" must be a string array, string, or null.`,
+      );
+    }
+
+    if (edit.op === "replace" && typeof edit.pos !== "string") {
+      throw new Error(`Edit ${index} with op "replace" requires a "pos" anchor string.`);
+    }
+
+    if ((edit.op === "append" || edit.op === "prepend") && hasOwn(edit, "end")) {
+      throw new Error(
+        `Edit ${index} with op "${edit.op}" does not support "end". Use "pos" or omit it for file boundary insertion.`,
       );
     }
   }

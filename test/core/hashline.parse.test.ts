@@ -63,14 +63,14 @@ describe("stripNewLinePrefixes", () => {
     expect(stripNewLinePrefixes(lines)).toEqual(["", "hello", "world"]);
   });
 
-  it("strips diff + prefixes at majority threshold", () => {
+  it("preserves literal '+' prefixed content", () => {
     const lines = ["+added", "+also added", "context"];
-    expect(stripNewLinePrefixes(lines)).toEqual(["added", "also added", "context"]);
+    expect(stripNewLinePrefixes(lines)).toEqual(["+added", "+also added", "context"]);
   });
 
-  it("strips mixed +LINE#HASH prefixes in diff-plus mode", () => {
+  it("preserves partial diff-like input without explicit diff-preview context", () => {
     const lines = ["+12#MQ:foo", "+ 13#VR:bar", "context"];
-    expect(stripNewLinePrefixes(lines)).toEqual(["foo", "bar", "context"]);
+    expect(stripNewLinePrefixes(lines)).toEqual(["+12#MQ:foo", "+ 13#VR:bar", "context"]);
   });
 
   it("strips mixed diff-preview context hashes and additions together", () => {
@@ -177,5 +177,9 @@ describe("hashlineParseText", () => {
 
   it("preserves '# Note:' comment in hashlineParseText", () => {
     expect(hashlineParseText(["# Note: important"])).toEqual(["# Note: important"]);
+  });
+
+  it("preserves literal '+' prefixed content in hashlineParseText", () => {
+    expect(hashlineParseText(["+added"])).toEqual(["+added"]);
   });
 });

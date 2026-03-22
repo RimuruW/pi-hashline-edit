@@ -33,6 +33,24 @@ describe("assertEditRequest", () => {
       } as any),
     ).toThrow(/cannot mix legacy camelCase and snake_case/i);
   });
+
+  it("rejects append with end", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        edits: [{ op: "append", end: "1#ZZ", lines: ["x"] }],
+      } as any),
+    ).toThrow(/does not support "end"/i);
+  });
+
+  it("rejects replace without pos", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        edits: [{ op: "replace", lines: ["x"] }],
+      } as any),
+    ).toThrow(/requires a "pos" anchor string/i);
+  });
 });
 
 describe("registerEditTool", () => {

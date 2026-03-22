@@ -86,6 +86,50 @@ describe("applyHashlineEdits — error handling", () => {
       );
     }
   });
+
+  it("rejects overlapping replace ranges in one request", () => {
+    const content = "aaa\nbbb\nccc\nddd";
+    expect(() =>
+      applyHashlineEdits(content, [
+        {
+          op: "replace",
+          pos: makeTag(2, "bbb"),
+          end: makeTag(3, "ccc"),
+          lines: ["X"],
+        },
+        {
+          op: "replace",
+          pos: makeTag(3, "ccc"),
+          lines: ["Y"],
+        },
+      ]),
+    ).toThrow(/conflicting edits.*overlap on the same original line range/i);
+  });
+
+  it("rejects multiple inserts targeting the same boundary", () => {
+    const content = "aaa\nbbb\nccc";
+    expect(() =>
+      applyHashlineEdits(content, [
+        { op: "append", pos: makeTag(2, "bbb"), lines: ["X"] },
+        { op: "prepend", pos: makeTag(3, "ccc"), lines: ["Y"] },
+      ]),
+    ).toThrow(/conflicting edits.*same insertion boundary/i);
+  });
+
+  it("rejects inserts inside a replaced range", () => {
+    const content = "aaa\nbbb\nccc\nddd";
+    expect(() =>
+      applyHashlineEdits(content, [
+        {
+          op: "replace",
+          pos: makeTag(2, "bbb"),
+          end: makeTag(3, "ccc"),
+          lines: ["X"],
+        },
+        { op: "append", pos: makeTag(2, "bbb"), lines: ["Y"] },
+      ]),
+    ).toThrow(/conflicting edits.*inserts inside a replaced original range/i);
+  });
 });
 
 // Only explicit input cleanup plus this boundary-duplicate correction remain as

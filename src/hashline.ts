@@ -198,33 +198,30 @@ function formatMismatchError(
 
 export function stripNewLinePrefixes(lines: string[]): string[] {
   let hashCount = 0;
-  let plusCount = 0;
+  let hashPlusCount = 0;
   let minusCount = 0;
   let diffPreviewCount = 0;
   let nonEmpty = 0;
 
-  for (const l of lines) {
-    if (!l.length) continue;
+  for (const line of lines) {
+    if (!line.length) continue;
     nonEmpty++;
 
-    const isHashLine = HASHLINE_PREFIX_RE.test(l);
-    const isHashPlusLine = HASHLINE_PREFIX_PLUS_RE.test(l);
-    const isPlusLine = DIFF_PLUS_RE.test(l);
-    const isMinusLine = DIFF_MINUS_RE.test(l);
+    const isHashLine = HASHLINE_PREFIX_RE.test(line);
+    const isHashPlusLine = HASHLINE_PREFIX_PLUS_RE.test(line);
+    const isMinusLine = DIFF_MINUS_RE.test(line);
 
     if (isHashLine) hashCount++;
+    if (isHashPlusLine) hashPlusCount++;
     if (isHashLine || isHashPlusLine || isMinusLine) diffPreviewCount++;
-    if (isPlusLine) plusCount++;
     if (isMinusLine) minusCount++;
   }
 
   if (!nonEmpty) return lines;
   const stripHash = hashCount > 0 && hashCount === nonEmpty;
   const stripDiffPreview =
-    !stripHash && (plusCount > 0 || minusCount > 0) && diffPreviewCount === nonEmpty;
-  const stripPlus =
-    !stripHash && !stripDiffPreview && plusCount > 0 && plusCount >= nonEmpty * 0.5;
-  if (!stripHash && !stripDiffPreview && !stripPlus) return lines;
+    !stripHash && (hashPlusCount > 0 || minusCount > 0) && diffPreviewCount === nonEmpty;
+  if (!stripHash && !stripDiffPreview) return lines;
 
   if (stripDiffPreview) {
     const stripped: string[] = [];
@@ -235,18 +232,7 @@ export function stripNewLinePrefixes(lines: string[]): string[] {
     return stripped;
   }
 
-  return lines.map((line) => {
-    if (stripHash) {
-      return line.replace(HASHLINE_PREFIX_RE, "");
-    }
-    if (stripPlus) {
-      if (HASHLINE_PREFIX_PLUS_RE.test(line)) {
-        return line.replace(HASHLINE_PREFIX_PLUS_RE, "");
-      }
-      return line.replace(DIFF_PLUS_RE, "");
-    }
-    return line;
-  });
+  return lines.map((line) => line.replace(HASHLINE_PREFIX_RE, ""));
 }
 
 /**
@@ -275,8 +261,8 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  *
  * - replace + pos only → single-line replace
  * - replace + pos + end → range replace
- * - append + pos or end → append after that anchor
- * - prepend + pos or end → prepend before that anchor
+ * - append + pos → append after that anchor
+ * - prepend + pos → prepend before that anchor
  * - no anchors → file-level append/prepend (only for those ops)
  *
  * Unknown or missing ops are rejected explicitly.
@@ -285,32 +271,49 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
   const result: HashlineEdit[] = [];
   for (const edit of edits) {
     const lines = hashlineParseText(edit.lines);
-    const tag = edit.pos ? parseLineRef(edit.pos) : undefined;
-    const end = edit.end ? parseLineRef(edit.end) : undefined;
-
     const op = edit.op;
     if (op !== "replace" && op !== "append" && op !== "prepend") {
       throw new Error(
         `Unknown edit op "${op}". Expected "replace", "append", or "prepend".`,
       );
     }
+
     switch (op) {
       case "replace": {
-        if (tag && end) {
-          result.push({ op: "replace", pos: tag, end, lines });
-        } else if (tag || end) {
-          result.push({ op: "replace", pos: tag || end!, lines });
-        } else {
-          throw new Error("Replace requires at least one anchor (pos or end).");
+        if (!edit.pos) {
+          throw new Error('Replace requires a "pos" anchor.');
         }
+
+        result.push({
+          op: "replace",
+          pos: parseLineRef(edit.pos),
+          ...(edit.end ? { end: parseLineRef(edit.end) } : {}),
+          lines,
+        });
         break;
       }
       case "append": {
-        result.push({ op: "append", pos: tag ?? end, lines });
+        if (edit.end !== undefined) {
+          throw new Error('Append does not support "end". Use "pos" or omit it for EOF.');
+        }
+
+        result.push({
+          op: "append",
+          ...(edit.pos ? { pos: parseLineRef(edit.pos) } : {}),
+          lines,
+        });
         break;
       }
       case "prepend": {
-        result.push({ op: "prepend", pos: end ?? tag, lines });
+        if (edit.end !== undefined) {
+          throw new Error('Prepend does not support "end". Use "pos" or omit it for BOF.');
+        }
+
+        result.push({
+          op: "prepend",
+          ...(edit.pos ? { pos: parseLineRef(edit.pos) } : {}),
+          lines,
+        });
         break;
       }
     }
@@ -429,6 +432,121 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   }
 }
 
+type NormalizedEditTarget =
+  | {
+      kind: "replace";
+      index: number;
+      label: string;
+      startLine: number;
+      endLine: number;
+    }
+  | {
+      kind: "insert";
+      index: number;
+      label: string;
+      boundary: number;
+    };
+
+function describeEdit(edit: HashlineEdit): string {
+  switch (edit.op) {
+    case "replace":
+      return edit.end
+        ? `replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}`
+        : `replace ${edit.pos.line}#${edit.pos.hash}`;
+    case "append":
+      return edit.pos
+        ? `append after ${edit.pos.line}#${edit.pos.hash}`
+        : "append at EOF";
+    case "prepend":
+      return edit.pos
+        ? `prepend before ${edit.pos.line}#${edit.pos.hash}`
+        : "prepend at BOF";
+  }
+}
+
+function normalizeEditTarget(
+  edit: HashlineEdit,
+  index: number,
+  fileLineCount: number,
+): NormalizedEditTarget {
+  switch (edit.op) {
+    case "replace":
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        startLine: edit.pos.line,
+        endLine: edit.end?.line ?? edit.pos.line,
+      };
+    case "append":
+      return {
+        kind: "insert",
+        index,
+        label: describeEdit(edit),
+        boundary: edit.pos ? edit.pos.line : fileLineCount,
+      };
+    case "prepend":
+      return {
+        kind: "insert",
+        index,
+        label: describeEdit(edit),
+        boundary: edit.pos ? edit.pos.line - 1 : 0,
+      };
+  }
+}
+
+function throwEditConflict(
+  left: NormalizedEditTarget,
+  right: NormalizedEditTarget,
+  reason: string,
+): never {
+  throw new Error(
+    `Conflicting edits in a single request: edit ${left.index} (${left.label}) and edit ${right.index} (${right.label}) ${reason}. Merge them into one non-overlapping change or split the request.`,
+  );
+}
+
+function assertNoConflictingEdits(
+  edits: HashlineEdit[],
+  fileLineCount: number,
+): void {
+  const targets = edits.map((edit, index) => normalizeEditTarget(edit, index, fileLineCount));
+
+  for (let i = 0; i < targets.length; i++) {
+    const left = targets[i]!;
+    for (let j = i + 1; j < targets.length; j++) {
+      const right = targets[j]!;
+
+      if (left.kind === "replace" && right.kind === "replace") {
+        const overlaps = left.startLine <= right.endLine && right.startLine <= left.endLine;
+        if (overlaps) {
+          throwEditConflict(left, right, "overlap on the same original line range");
+        }
+        continue;
+      }
+
+      if (left.kind === "insert" && right.kind === "insert") {
+        if (left.boundary === right.boundary) {
+          throwEditConflict(left, right, "target the same insertion boundary");
+        }
+        continue;
+      }
+
+      const replaceTarget = left.kind === "replace" ? left : right;
+      const insertTarget = left.kind === "insert" ? left : right;
+      const insertsInsideReplace =
+        insertTarget.boundary >= replaceTarget.startLine &&
+        insertTarget.boundary < replaceTarget.endLine;
+      if (insertsInsideReplace) {
+        throwEditConflict(
+          left,
+          right,
+          "cannot be applied together because one inserts inside a replaced original range",
+        );
+      }
+    }
+  }
+}
+
 export function applyHashlineEdits(
   content: string,
   edits: HashlineEdit[],
@@ -510,9 +628,6 @@ export function applyHashlineEdits(
   if (mismatches.length)
     throw new Error(formatMismatchError(mismatches, fileLines, retryLines));
 
-  maybeAutocorrectEscapedTabIndentation(edits, warnings, fileLines);
-  maybeWarnSuspiciousUnicodeEscapePlaceholder(edits, warnings);
-
   // Deduplicate identical edits
   const seenEditKeys = new Map<string, number>();
   const dedupIndices = new Set<number>();
@@ -555,6 +670,10 @@ export function applyHashlineEdits(
       if (dedupIndices.has(i)) edits.splice(i, 1);
     }
   }
+
+  assertNoConflictingEdits(edits, fileLines.length);
+  maybeAutocorrectEscapedTabIndentation(edits, warnings, fileLines);
+  maybeWarnSuspiciousUnicodeEscapePlaceholder(edits, warnings);
 
   // Compute sort key (descending) — bottom-up application
   const annotated = edits.map((edit, idx) => {

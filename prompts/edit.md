@@ -19,10 +19,12 @@ Payload shape: `{ path, edits }`
 </contract>
 
 <operations>
-Every edit entry has `op`, `lines`, and optional `pos` / `end`.
+Every edit entry has `op` and `lines`.
 - `replace`: replace one line (`pos`) or a range (`pos` + `end`)
 - `append`: insert after `pos`; omit `pos` for end of file
 - `prepend`: insert before `pos`; omit `pos` for beginning of file
+
+`end` is only valid for `replace`.
 
 Anchors use `"N#ID"` format from fresh `read` output.
 Examples:

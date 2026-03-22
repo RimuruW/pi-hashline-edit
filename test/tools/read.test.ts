@@ -31,4 +31,16 @@ describe("formatHashlineReadPreview", () => {
     expect(result.text).toContain("Offset 10 is beyond end of file");
     expect(result.text).toContain("2 lines total");
   });
+
+  it("rejects fractional offsets", () => {
+    expect(() =>
+      formatHashlineReadPreview("alpha\nbeta", { offset: 1.5 }),
+    ).toThrow(/offset.*positive integer/i);
+  });
+
+  it("rejects non-positive limits", () => {
+    expect(() =>
+      formatHashlineReadPreview("alpha\nbeta", { limit: 0 }),
+    ).toThrow(/limit.*positive integer/i);
+  });
 });

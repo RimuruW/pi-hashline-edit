@@ -30,19 +30,16 @@ describe("resolveEditAnchors", () => {
     expect(r.end).toBeUndefined();
   });
 
-  it("resolves replace with end only (falls back)", () => {
+  it("rejects replace with end only", () => {
     const edits: HashlineToolEdit[] = [
       { op: "replace", end: "5#MQ", lines: ["new"] },
     ];
-    const resolved = resolveEditAnchors(edits);
-    expect(resolved).toHaveLength(1);
-    const r = resolved[0] as { op: "replace"; pos: Anchor; lines: string[] };
-    expect(r.pos.line).toBe(5);
+    expect(() => resolveEditAnchors(edits)).toThrow(/requires a "pos" anchor/i);
   });
 
   it("throws on replace with no anchors", () => {
     const edits: HashlineToolEdit[] = [{ op: "replace", lines: ["new"] }];
-    expect(() => resolveEditAnchors(edits)).toThrow(/at least one anchor/);
+    expect(() => resolveEditAnchors(edits)).toThrow(/requires a "pos" anchor/i);
   });
 
   it("throws on malformed pos for append (not silently degraded to EOF)", () => {
@@ -89,6 +86,13 @@ describe("resolveEditAnchors", () => {
     expect(resolved[0].pos).toBeUndefined();
   });
 
+  it("rejects append with end", () => {
+    const edits: HashlineToolEdit[] = [
+      { op: "append", end: "5#MQ", lines: ["new"] },
+    ];
+    expect(() => resolveEditAnchors(edits)).toThrow(/append does not support "end"/i);
+  });
+
   it("resolves prepend with pos", () => {
     const edits: HashlineToolEdit[] = [
       { op: "prepend", pos: "5#MQ", lines: ["new"] },
@@ -102,6 +106,13 @@ describe("resolveEditAnchors", () => {
     const resolved = resolveEditAnchors(edits);
     expect(resolved[0].op).toBe("prepend");
     expect(resolved[0].pos).toBeUndefined();
+  });
+
+  it("rejects prepend with end", () => {
+    const edits: HashlineToolEdit[] = [
+      { op: "prepend", end: "5#MQ", lines: ["new"] },
+    ];
+    expect(() => resolveEditAnchors(edits)).toThrow(/prepend does not support "end"/i);
   });
 
   it("parses string lines input", () => {
