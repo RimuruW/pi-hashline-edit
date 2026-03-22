@@ -4,7 +4,7 @@ import { registerCompatibilityNotifications } from "../../src/compatibility-noti
 describe("registerCompatibilityNotifications", () => {
   it("emits one warning at turn_end when one or more edit fallbacks were used", async () => {
     const handlers = new Map<string, Function>();
-    const notify = mock(() => {});
+    const notify = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);
@@ -34,7 +34,7 @@ describe("registerCompatibilityNotifications", () => {
 
   it("does not notify when no compatibility fallback was used", async () => {
     const handlers = new Map<string, Function>();
-    const notify = mock(() => {});
+    const notify = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);
@@ -52,7 +52,7 @@ describe("registerCompatibilityNotifications", () => {
 
   it("does not notify when the UI is unavailable", async () => {
     const handlers = new Map<string, Function>();
-    const notify = mock(() => {});
+    const notify = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);
@@ -74,7 +74,7 @@ describe("registerCompatibilityNotifications", () => {
 
   it("ignores error tool results", async () => {
     const handlers = new Map<string, Function>();
-    const notify = mock(() => {});
+    const notify = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);
@@ -96,7 +96,7 @@ describe("registerCompatibilityNotifications", () => {
 
   it("resets the accumulator between turns", async () => {
     const handlers = new Map<string, Function>();
-    const notify = mock(() => {});
+    const notify = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);
@@ -122,8 +122,8 @@ describe("registerCompatibilityNotifications", () => {
 
   it("tracks compatibility warnings independently per session", async () => {
     const handlers = new Map<string, Function>();
-    const notifyA = mock(() => {});
-    const notifyB = mock(() => {});
+    const notifyA = mock((_msg: string, _level: string) => {});
+    const notifyB = mock((_msg: string, _level: string) => {});
     const pi = {
       on(name: string, handler: Function) {
         handlers.set(name, handler);

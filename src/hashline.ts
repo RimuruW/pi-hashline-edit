@@ -555,8 +555,10 @@ function assertNoConflictingEdits(
         continue;
       }
 
-      const replaceTarget = left.kind === "replace" ? left : right;
-      const insertTarget = left.kind === "insert" ? left : right;
+      const [replaceTarget, insertTarget] =
+        left.kind === "replace"
+          ? [left, right as Extract<NormalizedEditTarget, { kind: "insert" }>]
+          : [right as Extract<NormalizedEditTarget, { kind: "replace" }>, left];
       const insertsInsideReplace =
         insertTarget.boundary >= replaceTarget.startLine &&
         // boundary === endLine is intentionally allowed: append-after-endLine
