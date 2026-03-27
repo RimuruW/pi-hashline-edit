@@ -1,3 +1,5 @@
+import { replaceText } from "./edit-diff";
+
 export type LegacyTopLevelReplace = {
   oldText: string;
   newText: string;
@@ -43,6 +45,7 @@ export function applyExactUniqueLegacyReplace(
 ): {
   content: string;
   matchCount: 1;
+  usedFuzzyMatch: boolean;
 } {
   if (oldText.length === 0) {
     throw new Error("Legacy compatibility replace requires non-empty oldText.");
@@ -69,21 +72,37 @@ export function applyExactUniqueLegacyReplace(
     }
   }
 
-  if (matches.length === 0) {
-    throw new Error(
-      "Legacy compatibility replace found no exact match in the current file.",
-    );
-  }
-
   if (matches.length > 1) {
     throw new Error(
       "Legacy compatibility replace found multiple exact matches; re-read and use hashline edits.",
     );
   }
 
-  const index = matches[0]!;
+  if (matches.length === 1) {
+    const index = matches[0]!;
+    return {
+      content: content.slice(0, index) + newText + content.slice(index + oldText.length),
+      matchCount: 1,
+      usedFuzzyMatch: false,
+    };
+  }
+
+  const fuzzyReplaced = replaceText(content, oldText, newText, { all: true });
+  if (fuzzyReplaced.count === 0) {
+    throw new Error(
+      "Legacy compatibility replace found no exact or fuzzy match in the current file.",
+    );
+  }
+
+  if (fuzzyReplaced.count > 1) {
+    throw new Error(
+      "Legacy compatibility replace found multiple fuzzy matches; re-read and use hashline edits.",
+    );
+  }
+
   return {
-    content: content.slice(0, index) + newText + content.slice(index + oldText.length),
+    content: fuzzyReplaced.content,
     matchCount: 1,
+    usedFuzzyMatch: true,
   };
 }

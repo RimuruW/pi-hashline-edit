@@ -1,3 +1,4 @@
+import { Text } from "@mariozechner/pi-tui";
 import type { EditToolDetails, ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { constants } from "fs";
@@ -16,6 +17,7 @@ import {
   extractLegacyTopLevelReplace,
 } from "./edit-compat";
 import { writeFileAtomically } from "./fs-write";
+import { withFileMutationQueue } from "./file-mutation-queue";
 import {
   applyHashlineEdits,
   resolveEditAnchors,
@@ -92,6 +94,7 @@ type CompatibilityDetails = {
   used: true;
   strategy: "legacy-top-level-replace";
   matchCount: 1;
+  fuzzyMatch?: true;
 };
 
 const EDIT_DESC = readFileSync(
@@ -219,6 +222,168 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
       );
     }
   }
+
+}
+
+type EditPreview = { diff: string } | { error: string };
+type EditRenderState = {
+  argsKey?: string;
+  preview?: EditPreview;
+};
+
+function getRenderablePreviewInput(args: unknown): EditRequestParams | null {
+  if (!isRecord(args) || typeof args.path !== "string") {
+    return null;
+  }
+
+  const request: EditRequestParams = { path: args.path };
+  if (Array.isArray(args.edits)) {
+    request.edits = args.edits as HashlineToolEdit[];
+  }
+  if (typeof args.oldText === "string") {
+    request.oldText = args.oldText;
+  }
+  if (typeof args.newText === "string") {
+    request.newText = args.newText;
+  }
+  if (typeof args.old_text === "string") {
+    request.old_text = args.old_text;
+  }
+  if (typeof args.new_text === "string") {
+    request.new_text = args.new_text;
+  }
+
+  const hasAnyEditPayload =
+    request.edits !== undefined ||
+    request.oldText !== undefined ||
+    request.newText !== undefined ||
+    request.old_text !== undefined ||
+    request.new_text !== undefined;
+  return hasAnyEditPayload ? request : null;
+}
+
+function formatPreviewDiff(
+  diff: string,
+  expanded: boolean,
+  theme: { fg: (token: string, text: string) => string },
+): string {
+  const lines = diff.split("\n");
+  const maxLines = expanded ? 40 : 16;
+  const shown = lines.slice(0, maxLines).map((line) => {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      return theme.fg("success", line);
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      return theme.fg("error", line);
+    }
+    return theme.fg("dim", line);
+  });
+
+  if (lines.length > maxLines) {
+    shown.push(theme.fg("muted", `... ${lines.length - maxLines} more diff lines`));
+  }
+  return shown.join("\n");
+}
+
+function formatEditCall(
+  args: EditRequestParams | undefined,
+  state: EditRenderState,
+  expanded: boolean,
+  theme: {
+    bold: (text: string) => string;
+    fg: (token: string, text: string) => string;
+  },
+): string {
+  const path = args?.path;
+  const pathDisplay =
+    typeof path === "string" && path.length > 0
+      ? theme.fg("accent", path)
+      : theme.fg("toolOutput", "...");
+  let text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+
+  if (!state.preview) {
+    return text;
+  }
+
+  if ("error" in state.preview) {
+    text += `\n\n${theme.fg("error", state.preview.error)}`;
+    return text;
+  }
+
+  if (state.preview.diff) {
+    text += `\n\n${formatPreviewDiff(state.preview.diff, expanded, theme)}`;
+  }
+  return text;
+}
+
+export async function computeEditPreview(
+  request: unknown,
+  cwd: string,
+  ): Promise<EditPreview> {
+  try {
+    assertEditRequest(request);
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const params = request as EditRequestParams;
+  const path = params.path;
+  const absolutePath = resolveToCwd(path, cwd);
+  const toolEdits = Array.isArray(params.edits) ? params.edits : [];
+  const legacy = extractLegacyTopLevelReplace(params as Record<string, unknown>);
+
+  if (toolEdits.length === 0 && !legacy) {
+    return { error: "No edits provided." };
+  }
+
+  try {
+    await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
+  } catch {
+    return { error: `File not found: ${path}` };
+  }
+
+  try {
+    const fileKind = await classifyFileKind(absolutePath);
+    if (fileKind.kind === "directory") {
+      return { error: `Path is a directory: ${path}. Use ls to inspect directories.` };
+    }
+    if (fileKind.kind === "image") {
+      return {
+        error: `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
+      };
+    }
+    if (fileKind.kind === "binary") {
+      return {
+        error: `Path is a binary file: ${path} (${fileKind.description}). Hashline edit only supports UTF-8 text files.`,
+      };
+    }
+
+    const raw = (await fsReadFile(absolutePath)).toString("utf-8");
+    const originalNormalized = normalizeToLF(stripBom(raw).text);
+
+    let result: string;
+    if (toolEdits.length > 0) {
+      const resolved = resolveEditAnchors(toolEdits);
+      result = applyHashlineEdits(originalNormalized, resolved).content;
+    } else {
+      result = applyExactUniqueLegacyReplace(
+        originalNormalized,
+        normalizeToLF(legacy!.oldText),
+        normalizeToLF(legacy!.newText),
+      ).content;
+    }
+
+    if (originalNormalized === result) {
+      return {
+        error: `No changes made to ${path}. The edits produced identical content.`,
+      };
+    }
+
+    return { diff: generateDiffString(originalNormalized, result).diff };
+  } catch (error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+
 }
 
 export function registerEditTool(pi: ExtensionAPI): void {
@@ -227,6 +392,39 @@ export function registerEditTool(pi: ExtensionAPI): void {
     label: "Edit",
     description: EDIT_DESC,
     parameters: hashlineEditToolSchema,
+    promptSnippet: "Apply hashline-anchored edits to a single file",
+    promptGuidelines: [
+      "Use LINE#HASH anchors from read output; stale anchors must be re-read before retrying.",
+      "When changing multiple separate locations in one file, use one edit call with edits[] instead of multiple edit calls.",
+    ],
+    renderCall(args, theme, context) {
+      const previewInput = getRenderablePreviewInput(args);
+      if (!context.argsComplete || !previewInput) {
+        context.state.argsKey = undefined;
+        context.state.preview = undefined;
+      } else {
+        const argsKey = JSON.stringify(previewInput);
+        if (context.state.argsKey !== argsKey) {
+          context.state.argsKey = argsKey;
+          computeEditPreview(previewInput, context.cwd).then((preview) => {
+            if (context.state.argsKey === argsKey) {
+              context.state.preview = preview;
+              context.invalidate();
+            }
+          });
+        }
+      }
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      text.setText(
+        formatEditCall(
+          getRenderablePreviewInput(args) ?? undefined,
+          context.state as EditRenderState,
+          context.expanded,
+          theme,
+        ),
+      );
+      return text;
+    },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       assertEditRequest(params);
@@ -246,120 +444,123 @@ export function registerEditTool(pi: ExtensionAPI): void {
         };
       }
 
-      throwIfAborted(signal);
-      try {
-        await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
-      } catch {
-        throw new Error(`File not found: ${path}`);
-      }
-
-      throwIfAborted(signal);
-      const fileKind = await classifyFileKind(absolutePath);
-      if (fileKind.kind === "directory") {
-        throw new Error(`Path is a directory: ${path}. Use ls to inspect directories.`);
-      }
-      if (fileKind.kind === "image") {
-        throw new Error(
-          `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
-        );
-      }
-      if (fileKind.kind === "binary") {
-        throw new Error(
-          `Path is a binary file: ${path} (${fileKind.description}). Hashline edit only supports UTF-8 text files.`,
-        );
-      }
-
-      throwIfAborted(signal);
-      const raw = (await fsReadFile(absolutePath)).toString("utf-8");
-      throwIfAborted(signal);
-
-      const { bom, text: content } = stripBom(raw);
-      const originalEnding = detectLineEnding(content);
-      const originalNormalized = normalizeToLF(content);
-
-      let result: string;
-      let warnings: string[] | undefined;
-      let noopEdits:
-        | Array<{
-            editIndex: number;
-            loc: string;
-            currentContent: string;
-          }>
-        | undefined;
-      let firstChangedLine: number | undefined;
-      let compatibilityDetails: CompatibilityDetails | undefined;
-
-      if (toolEdits.length > 0) {
-        const resolved = resolveEditAnchors(toolEdits);
-        const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
-        result = anchorResult.content;
-        warnings = anchorResult.warnings;
-        noopEdits = anchorResult.noopEdits;
-        firstChangedLine = anchorResult.firstChangedLine;
-      } else {
-        // Normalize legacy payload to LF before replacement so CRLF callers still
-        // match normalized file content, and so restoreLineEndings does not produce
-        // \r\r\n corruption on inserted multiline text.
-        const normalizedOldText = normalizeToLF(legacy!.oldText);
-        const normalizedNewText = normalizeToLF(legacy!.newText);
-        const replaced = applyExactUniqueLegacyReplace(
-          originalNormalized,
-          normalizedOldText,
-          normalizedNewText,
-        );
-        result = replaced.content;
-        compatibilityDetails = {
-          used: true,
-          strategy: legacy!.strategy,
-          matchCount: replaced.matchCount,
-        };
-      }
-
-      if (originalNormalized === result) {
-        let diagnostic = `No changes made to ${path}. The edits produced identical content.`;
-        if (noopEdits?.length) {
-          diagnostic +=
-            "\n" +
-            noopEdits
-              .map(
-                (edit) =>
-                  `Edit ${edit.editIndex}: replacement for ${edit.loc} is identical to current content:\n  ${edit.loc}: ${edit.currentContent}`,
-              )
-              .join("\n");
+      return withFileMutationQueue(absolutePath, async () => {
+        throwIfAborted(signal);
+        try {
+          await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
+        } catch {
+          throw new Error(`File not found: ${path}`);
         }
-        diagnostic +=
-          "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
-        throw new Error(diagnostic);
-      }
 
-      throwIfAborted(signal);
-      await writeFileAtomically(
-        absolutePath,
-        bom + restoreLineEndings(result, originalEnding),
-      );
+        throwIfAborted(signal);
+        const fileKind = await classifyFileKind(absolutePath);
+        if (fileKind.kind === "directory") {
+          throw new Error(`Path is a directory: ${path}. Use ls to inspect directories.`);
+        }
+        if (fileKind.kind === "image") {
+          throw new Error(
+            `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
+          );
+        }
+        if (fileKind.kind === "binary") {
+          throw new Error(
+            `Path is a binary file: ${path} (${fileKind.description}). Hashline edit only supports UTF-8 text files.`,
+          );
+        }
 
-      const diffResult = generateDiffString(originalNormalized, result);
-      const preview = buildCompactHashlineDiffPreview(diffResult.diff);
-      const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
-      const previewBlock = preview.preview
-        ? `\n\nDiff preview:\n${preview.preview}`
-        : "";
-      const warningsBlock = warnings?.length
-        ? `\n\nWarnings:\n${warnings.join("\n")}`
-        : "";
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Updated ${path}\n${summaryLine}${previewBlock}${warningsBlock}`,
-          },
-        ],
-        details: {
-          diff: diffResult.diff,
-          firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
-          ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
-        } as EditToolDetails,
-      };
+        throwIfAborted(signal);
+        const raw = (await fsReadFile(absolutePath)).toString("utf-8");
+        throwIfAborted(signal);
+
+        const { bom, text: content } = stripBom(raw);
+        const originalEnding = detectLineEnding(content);
+        const originalNormalized = normalizeToLF(content);
+
+        let result: string;
+        let warnings: string[] | undefined;
+        let noopEdits:
+          | Array<{
+              editIndex: number;
+              loc: string;
+              currentContent: string;
+            }>
+          | undefined;
+        let firstChangedLine: number | undefined;
+        let compatibilityDetails: CompatibilityDetails | undefined;
+
+        if (toolEdits.length > 0) {
+          const resolved = resolveEditAnchors(toolEdits);
+          const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+          result = anchorResult.content;
+          warnings = anchorResult.warnings;
+          noopEdits = anchorResult.noopEdits;
+          firstChangedLine = anchorResult.firstChangedLine;
+        } else {
+          // Normalize legacy payload to LF before replacement so CRLF callers still
+          // match normalized file content, and so restoreLineEndings does not produce
+          // \r\r\n corruption on inserted multiline text.
+          const normalizedOldText = normalizeToLF(legacy!.oldText);
+          const normalizedNewText = normalizeToLF(legacy!.newText);
+          const replaced = applyExactUniqueLegacyReplace(
+            originalNormalized,
+            normalizedOldText,
+            normalizedNewText,
+          );
+          result = replaced.content;
+          compatibilityDetails = {
+            used: true,
+            strategy: legacy!.strategy,
+            matchCount: replaced.matchCount,
+            ...(replaced.usedFuzzyMatch ? { fuzzyMatch: true } : {}),
+          };
+        }
+
+        if (originalNormalized === result) {
+          let diagnostic = `No changes made to ${path}. The edits produced identical content.`;
+          if (noopEdits?.length) {
+            diagnostic +=
+              "\n" +
+              noopEdits
+                .map(
+                  (edit) =>
+                    `Edit ${edit.editIndex}: replacement for ${edit.loc} is identical to current content:\n  ${edit.loc}: ${edit.currentContent}`,
+                )
+                .join("\n");
+          }
+          diagnostic +=
+            "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
+          throw new Error(diagnostic);
+        }
+
+        throwIfAborted(signal);
+        await writeFileAtomically(
+          absolutePath,
+          bom + restoreLineEndings(result, originalEnding),
+        );
+
+        const diffResult = generateDiffString(originalNormalized, result);
+        const preview = buildCompactHashlineDiffPreview(diffResult.diff);
+        const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
+        const previewBlock = preview.preview
+          ? `\n\nDiff preview:\n${preview.preview}`
+          : "";
+        const warningsBlock = warnings?.length
+          ? `\n\nWarnings:\n${warnings.join("\n")}`
+          : "";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Updated ${path}\n${summaryLine}${previewBlock}${warningsBlock}`,
+            },
+          ],
+          details: {
+            diff: diffResult.diff,
+            firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
+            ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
+          } as EditToolDetails,
+        };
+      });
     },
   });
 }

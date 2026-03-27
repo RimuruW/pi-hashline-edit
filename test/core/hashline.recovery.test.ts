@@ -395,6 +395,19 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
     expect(result.content).toBe("aaa\nBBB\nccc");
   });
 
+  it("full pipeline: copied full-line anchor tolerates fuzzy same-line Unicode differences", () => {
+    const content = "he said “hi”\nkeep";
+    const asciiLine = 'he said "hi"';
+    const staleWithHint = `1#${computeLineHash(1, asciiLine)}:${asciiLine}`;
+    const toolEdits: HashlineToolEdit[] = [
+      { op: "replace", pos: staleWithHint, lines: ["HELLO"] },
+    ];
+    const resolved = resolveEditAnchors(toolEdits);
+    const result = applyHashlineEdits(content, resolved);
+    expect(result.content).toBe("HELLO\nkeep");
+    expect(result.warnings?.[0]).toContain("Accepted fuzzy anchor validation");
+  });
+
   it("full pipeline: copied diff-preview replace hunk drops deletion rows", () => {
     const content = "aaa\nbbb\nccc";
     const start = `1#${computeLineHash(1, "aaa")}`;

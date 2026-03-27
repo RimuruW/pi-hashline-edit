@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GitHub issue #7: `0.4.0 is broken`.** The published `edit` tool schema is now a top-level JSON object instead of a union, so Pi accepts tool registration again and legacy `oldText`/`newText` payloads still validate.
 - **EOF append semantics with terminal newlines.** `append` now inserts before the trailing newline sentinel, so appending to files ending in `\n` no longer creates an unintended blank line.
+- **Pi 0.63 per-file mutation queue synced.** Hashline `edit` now runs inside Pi's `withFileMutationQueue()`, preventing lost updates when multiple tools mutate the same file concurrently in one turn.
+- **Pi 0.63 edit preview synced.** The tool now renders an execution-time diff preview in the interactive UI before the edit runs, using the current file contents and the pending hashline or legacy payload.
+- **Pi 0.63 fuzzy matching partially synced.** Legacy `oldText`/`newText` compatibility mode now falls back to unique fuzzy matching for Unicode quote/dash/space and trailing-whitespace differences. Hashline mode stays line-anchored, but copied full-line anchors like `LINE#HASH:content` can now survive those same-line Unicode/whitespace differences without enabling free-text relocation.
 
 ### Verification
 

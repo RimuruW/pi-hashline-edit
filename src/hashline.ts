@@ -9,7 +9,7 @@ import { throwIfAborted } from "./runtime";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
-export type Anchor = { line: number; hash: string };
+export type Anchor = { line: number; hash: string; textHint?: string };
 export type HashlineEdit =
   | { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
   | { op: "append"; pos?: Anchor; lines: string[] }
@@ -87,6 +87,24 @@ export function computeLineHash(idx: number, line: string): string {
   return DICT[xxh32(line, seed) & 0xff];
 }
 
+const FUZZY_SINGLE_QUOTES_RE = /[\u2018\u2019\u201A\u201B]/g;
+const FUZZY_DOUBLE_QUOTES_RE = /[\u201C\u201D\u201E\u201F]/g;
+const FUZZY_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
+const FUZZY_UNICODE_SPACES_RE = /[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g;
+
+function normalizeFuzzyLine(text: string): string {
+  return text
+    .trimEnd()
+    .replace(FUZZY_SINGLE_QUOTES_RE, "'")
+    .replace(FUZZY_DOUBLE_QUOTES_RE, '"')
+    .replace(FUZZY_HYPHENS_RE, "-")
+    .replace(FUZZY_UNICODE_SPACES_RE, " ");
+}
+
+function isFuzzyEquivalentLine(expected: string, actual: string): boolean {
+  return normalizeFuzzyLine(expected) === normalizeFuzzyLine(actual);
+}
+
 // ─── Parsing ────────────────────────────────────────────────────────────
 
 function diagnoseLineRef(ref: string): string {
@@ -134,15 +152,40 @@ export function parseLineRef(ref: string): { line: number; hash: string } {
   // Match LINE#HASH format, tolerating:
   //  - leading ">+" and whitespace (from mismatch/diff display)
   //  - optional trailing display suffix (":..." content)
-  const match = ref.match(HASHLINE_REF_RE);
+  const parsed = parseAnchorRef(ref);
+  return { line: parsed.line, hash: parsed.hash };
+}
+
+function parseAnchorRef(ref: string): Anchor {
+  const trimmed = ref.trim();
+  const core = ref.replace(/^\s*[>+-]*\s*/, "").trimEnd();
+  const match = core.match(/^([0-9]+)\s*#\s*([^\s:]+)(?:\s*:(.*))?$/s);
   if (!match) {
     throw new Error(diagnoseLineRef(ref));
   }
-  const line = Number.parseInt(match[1], 10);
+
+  const line = Number.parseInt(match[1]!, 10);
   if (line < 1) {
     throw new Error(`Line number must be >= 1, got ${line} in "${ref}".`);
   }
-  return { line, hash: match[2]! };
+
+  const hash = match[2]!;
+  if (hash.length !== 2) {
+    throw new Error(`Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`);
+  }
+
+  if (!HASH_ALPHABET_RE.test(hash)) {
+    throw new Error(
+      `Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`,
+    );
+  }
+
+  const textHint = match[3];
+  return {
+    line,
+    hash,
+    ...(textHint !== undefined ? { textHint } : {}),
+  };
 }
 
 // ─── Mismatch formatting ────────────────────────────────────────────────
@@ -286,8 +329,8 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 
         result.push({
           op: "replace",
-          pos: parseLineRef(edit.pos),
-          ...(edit.end ? { end: parseLineRef(edit.end) } : {}),
+          pos: parseAnchorRef(edit.pos),
+          ...(edit.end ? { end: parseAnchorRef(edit.end) } : {}),
           lines,
         });
         break;
@@ -299,7 +342,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 
         result.push({
           op: "append",
-          ...(edit.pos ? { pos: parseLineRef(edit.pos) } : {}),
+          ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
           lines,
         });
         break;
@@ -311,7 +354,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 
         result.push({
           op: "prepend",
-          ...(edit.pos ? { pos: parseLineRef(edit.pos) } : {}),
+          ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
           lines,
         });
         break;
@@ -602,12 +645,24 @@ export function applyHashlineEdits(
   // Validate all refs before mutation
   const mismatches: HashMismatch[] = [];
   const retryLines = new Set<number>();
+  const acceptedFuzzyRefs = new Set<string>();
   function validate(ref: Anchor): boolean {
     if (ref.line < 1 || ref.line > fileLines.length) {
       throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
     }
-    const actual = computeLineHash(ref.line, fileLines[ref.line - 1]);
+    const line = fileLines[ref.line - 1];
+    const actual = computeLineHash(ref.line, line);
     if (actual === ref.hash) return true;
+    if (ref.textHint !== undefined && isFuzzyEquivalentLine(ref.textHint, line)) {
+      const key = `${ref.line}:${ref.hash}:${ref.textHint}`;
+      if (!acceptedFuzzyRefs.has(key)) {
+        acceptedFuzzyRefs.add(key);
+        warnings.push(
+          `Accepted fuzzy anchor validation at line ${ref.line}: exact hash mismatched, but the copied line content still matched after whitespace/Unicode normalization.`,
+        );
+      }
+      return true;
+    }
     mismatches.push({ line: ref.line, expected: ref.hash, actual });
     retryLines.add(ref.line);
     return false;
