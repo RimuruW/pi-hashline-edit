@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-03-27
+
+### Fixed
+
+- **GitHub issue #7: `0.4.0 is broken`.** The published `edit` tool schema is now a top-level JSON object instead of a union, so Pi accepts tool registration again and legacy `oldText`/`newText` payloads still validate.
+- **EOF append semantics with terminal newlines.** `append` now inserts before the trailing newline sentinel, so appending to files ending in `\n` no longer creates an unintended blank line.
+
+### Verification
+
+- Added regression tests for top-level schema publication and EOF append behavior.
+- `bun test` passes (181 tests).
+
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

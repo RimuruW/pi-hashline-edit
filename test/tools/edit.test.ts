@@ -123,7 +123,12 @@ describe("registerEditTool", () => {
     ).toBeTrue();
   });
 
-  it("registers the same union schema publicly", () => {
+  it("publishes a top-level object schema for pi tool registration", () => {
+    expect((hashlineEditToolSchema as any).type).toBe("object");
+    expect((hashlineEditToolSchema as any).anyOf).toBeUndefined();
+  });
+
+  it("registers the same schema publicly", () => {
     let registered: { parameters?: any } | undefined;
     const pi = {
       registerTool(tool: { parameters?: any }) {

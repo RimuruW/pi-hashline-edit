@@ -65,10 +65,12 @@ const hashlineEditItemSchema = Type.Union([
   prependEditItemSchema,
 ]);
 
-const strictHashlineEditToolSchema = Type.Object(
+export const hashlineEditToolSchema = Type.Object(
   {
     path: Type.String({ description: "path" }),
-    edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
+    edits: Type.Optional(
+      Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
+    ),
     oldText: Type.Optional(Type.String()),
     newText: Type.Optional(Type.String()),
     old_text: Type.Optional(Type.String()),
@@ -76,32 +78,6 @@ const strictHashlineEditToolSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-
-const legacyCamelEditToolSchema = Type.Object(
-  {
-    path: Type.String({ description: "path" }),
-    edits: Type.Optional(Type.Array(hashlineEditItemSchema)),
-    oldText: Type.String(),
-    newText: Type.String(),
-  },
-  { additionalProperties: false },
-);
-
-const legacySnakeEditToolSchema = Type.Object(
-  {
-    path: Type.String({ description: "path" }),
-    edits: Type.Optional(Type.Array(hashlineEditItemSchema)),
-    old_text: Type.String(),
-    new_text: Type.String(),
-  },
-  { additionalProperties: false },
-);
-
-export const hashlineEditToolSchema = Type.Union([
-  strictHashlineEditToolSchema,
-  legacyCamelEditToolSchema,
-  legacySnakeEditToolSchema,
-]);
 
 type EditRequestParams = {
   path: string;
@@ -142,7 +118,7 @@ function isStringArray(value: unknown): value is string[] {
 // Intentional overlap with the published TypeBox schema:
 // - pi normally runs AJV validation before execute(), but that can be disabled in
 //   environments without runtime code generation support.
-// - some request rules here are cross-field semantics the current union schema does
+// - some request rules here are cross-field semantics the top-level object schema does
 //   not express cleanly, such as rejecting mixed camelCase/snake_case legacy keys.
 export function assertEditRequest(request: unknown): asserts request is EditRequestParams {
   if (!isRecord(request)) {

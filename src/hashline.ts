@@ -593,6 +593,7 @@ export function applyHashlineEdits(
 
   const workingEdits = edits.map(cloneHashlineEdit);
   const fileLines = content.split("\n");
+  const hasTerminalNewline = content.endsWith("\n");
   const origLines = [...fileLines];
   let firstChanged: number | undefined;
   const noopEdits: NoopEdit[] = [];
@@ -823,15 +824,20 @@ export function applyHashlineEdits(
           break;
         }
         if (edit.pos) {
-          fileLines.splice(edit.pos.line, 0, ...inserted);
-          track(edit.pos.line + 1);
+          const insertAt =
+            hasTerminalNewline && edit.pos.line === fileLines.length
+              ? fileLines.length - 1
+              : edit.pos.line;
+          fileLines.splice(insertAt, 0, ...inserted);
+          track(insertAt + 1);
         } else {
           if (fileLines.length === 1 && fileLines[0] === "") {
             fileLines.splice(0, 1, ...inserted);
             track(1);
           } else {
-            fileLines.splice(fileLines.length, 0, ...inserted);
-            track(fileLines.length - inserted.length + 1);
+            const insertAt = hasTerminalNewline ? fileLines.length - 1 : fileLines.length;
+            fileLines.splice(insertAt, 0, ...inserted);
+            track(insertAt + 1);
           }
         }
         break;

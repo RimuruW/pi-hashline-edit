@@ -73,6 +73,22 @@ describe("applyHashlineEdits — basic operations", () => {
     expect(result.content).toBe("aaa\nbbb\nccc");
   });
 
+  it("appends to EOF before the terminal newline sentinel", () => {
+    const content = "aaa\nbbb\n";
+    const edits: HashlineEdit[] = [{ op: "append", lines: ["ccc"] }];
+    const result = applyHashlineEdits(content, edits);
+    expect(result.content).toBe("aaa\nbbb\nccc\n");
+    expect(result.firstChangedLine).toBe(3);
+  });
+
+  it("treats append after the terminal newline sentinel as EOF append", () => {
+    const content = "aaa\nbbb\n";
+    const edits: HashlineEdit[] = [{ op: "append", pos: makeTag(3, ""), lines: ["ccc"] }];
+    const result = applyHashlineEdits(content, edits);
+    expect(result.content).toBe("aaa\nbbb\nccc\n");
+    expect(result.firstChangedLine).toBe(3);
+  });
+
   it("appends to empty file", () => {
     const content = "";
     const edits: HashlineEdit[] = [{ op: "append", lines: ["first"] }];
