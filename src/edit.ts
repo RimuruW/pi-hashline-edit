@@ -99,6 +99,20 @@ const EDIT_DESC = readFileSync(
   "utf-8",
 ).trim();
 
+const EDIT_PROMPT_SNIPPET = readFileSync(
+  new URL("../prompts/edit-snippet.md", import.meta.url),
+  "utf-8",
+).trim();
+
+const EDIT_PROMPT_GUIDELINES = readFileSync(
+  new URL("../prompts/edit-guidelines.md", import.meta.url),
+  "utf-8",
+)
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line.startsWith("- "))
+  .map((line) => line.slice(2));
+
 const ROOT_KEYS = new Set(["path", "edits", "oldText", "newText", "old_text", "new_text"]);
 const ITEM_KEYS = new Set(["op", "pos", "end", "lines"]);
 const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
@@ -227,6 +241,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
     label: "Edit",
     description: EDIT_DESC,
     parameters: hashlineEditToolSchema,
+    promptSnippet: EDIT_PROMPT_SNIPPET,
+    promptGuidelines: EDIT_PROMPT_GUIDELINES,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       assertEditRequest(params);
