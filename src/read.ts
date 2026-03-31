@@ -25,6 +25,20 @@ const READ_DESC = readFileSync(
   .replaceAll("{{DEFAULT_MAX_BYTES}}", formatSize(DEFAULT_MAX_BYTES))
   .trim();
 
+const READ_PROMPT_SNIPPET = readFileSync(
+  new URL("../prompts/read-snippet.md", import.meta.url),
+  "utf-8",
+).trim();
+
+const READ_PROMPT_GUIDELINES = readFileSync(
+  new URL("../prompts/read-guidelines.md", import.meta.url),
+  "utf-8",
+)
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line.startsWith("- "))
+  .map((line) => line.slice(2));
+
 function normalizePositiveInteger(
   value: number | undefined,
   name: "offset" | "limit",
@@ -101,6 +115,8 @@ export function registerReadTool(pi: ExtensionAPI): void {
     name: "read",
     label: "Read",
     description: READ_DESC,
+    promptSnippet: READ_PROMPT_SNIPPET,
+    promptGuidelines: READ_PROMPT_GUIDELINES,
     parameters: Type.Object({
       path: Type.String({
         description: "Path to the file to read (relative or absolute)",

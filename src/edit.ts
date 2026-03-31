@@ -102,6 +102,20 @@ const EDIT_DESC = readFileSync(
   "utf-8",
 ).trim();
 
+const EDIT_PROMPT_SNIPPET = readFileSync(
+  new URL("../prompts/edit-snippet.md", import.meta.url),
+  "utf-8",
+).trim();
+
+const EDIT_PROMPT_GUIDELINES = readFileSync(
+  new URL("../prompts/edit-guidelines.md", import.meta.url),
+  "utf-8",
+)
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line.startsWith("- "))
+  .map((line) => line.slice(2));
+
 const ROOT_KEYS = new Set(["path", "edits", "oldText", "newText", "old_text", "new_text"]);
 const ITEM_KEYS = new Set(["op", "pos", "end", "lines"]);
 const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
@@ -392,11 +406,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
     label: "Edit",
     description: EDIT_DESC,
     parameters: hashlineEditToolSchema,
-    promptSnippet: "Apply hashline-anchored edits to a single file",
-    promptGuidelines: [
-      "Use LINE#HASH anchors from read output; stale anchors must be re-read before retrying.",
-      "When changing multiple separate locations in one file, use one edit call with edits[] instead of multiple edit calls.",
-    ],
+    promptSnippet: EDIT_PROMPT_SNIPPET,
+    promptGuidelines: EDIT_PROMPT_GUIDELINES,
     renderCall(args, theme, context) {
       const previewInput = getRenderablePreviewInput(args);
       if (!context.argsComplete || !previewInput) {
@@ -406,12 +417,14 @@ export function registerEditTool(pi: ExtensionAPI): void {
         const argsKey = JSON.stringify(previewInput);
         if (context.state.argsKey !== argsKey) {
           context.state.argsKey = argsKey;
-          computeEditPreview(previewInput, context.cwd).then((preview) => {
-            if (context.state.argsKey === argsKey) {
-              context.state.preview = preview;
-              context.invalidate();
-            }
-          });
+          computeEditPreview(previewInput, context.cwd)
+            .then((preview) => {
+              if (context.state.argsKey === argsKey) {
+                context.state.preview = preview;
+                context.invalidate();
+              }
+            })
+            .catch(() => {});
         }
       }
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);

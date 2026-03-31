@@ -87,19 +87,21 @@ export function applyExactUniqueLegacyReplace(
     };
   }
 
-  const fuzzyReplaced = replaceText(content, oldText, newText, { all: true });
-  if (fuzzyReplaced.count === 0) {
+  // Count fuzzy matches without mutating content, then replace only if unique.
+  const fuzzyCount = replaceText(content, oldText, oldText, { all: true }).count;
+  if (fuzzyCount === 0) {
     throw new Error(
       "Legacy compatibility replace found no exact or fuzzy match in the current file.",
     );
   }
 
-  if (fuzzyReplaced.count > 1) {
+  if (fuzzyCount > 1) {
     throw new Error(
       "Legacy compatibility replace found multiple fuzzy matches; re-read and use hashline edits.",
     );
   }
 
+  const fuzzyReplaced = replaceText(content, oldText, newText, { all: false });
   return {
     content: fuzzyReplaced.content,
     matchCount: 1,

@@ -157,7 +157,6 @@ export function parseLineRef(ref: string): { line: number; hash: string } {
 }
 
 function parseAnchorRef(ref: string): Anchor {
-  const trimmed = ref.trim();
   const core = ref.replace(/^\s*[>+-]*\s*/, "").trimEnd();
   const match = core.match(/^([0-9]+)\s*#\s*([^\s:]+)(?:\s*:(.*))?$/s);
   if (!match) {
