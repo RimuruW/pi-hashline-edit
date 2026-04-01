@@ -83,12 +83,13 @@ describe("applyExactUniqueLegacyReplace", () => {
     expect(applyExactUniqueLegacyReplace("a\nb\nc", "b", "B")).toEqual({
       content: "a\nB\nc",
       matchCount: 1,
+      usedFuzzyMatch: false,
     });
   });
 
   it("throws when the old text is missing", () => {
     expect(() => applyExactUniqueLegacyReplace("a\nb\nc", "z", "Z")).toThrow(
-      /exact match/i,
+      /exact or fuzzy match/i,
     );
   });
 
@@ -96,6 +97,26 @@ describe("applyExactUniqueLegacyReplace", () => {
     expect(() =>
       applyExactUniqueLegacyReplace("dup\nmid\ndup", "dup", "X"),
     ).toThrow(/multiple exact matches/i);
+  });
+
+  it("falls back to a unique fuzzy match when exact text differs only by Unicode punctuation or trailing space", () => {
+    expect(
+      applyExactUniqueLegacyReplace("alpha\nhe said “hi”  \nomega", 'he said "hi"', "HELLO"),
+    ).toEqual({
+      content: "alpha\nHELLO  \nomega",
+      matchCount: 1,
+      usedFuzzyMatch: true,
+    });
+  });
+
+  it("throws when fuzzy matching finds multiple candidates", () => {
+    expect(() =>
+      applyExactUniqueLegacyReplace(
+        "he said “hi”\nhe said “hi”",
+        'he said "hi"',
+        "HELLO",
+      ),
+    ).toThrow(/multiple fuzzy matches/i);
   });
 });
 
@@ -189,6 +210,37 @@ describe("edit tool compatibility mode", () => {
     );
   });
 
+  it("uses fuzzy legacy matching when exact oldText differs only by Unicode punctuation", async () => {
+    await withTempFile("sample.txt", "he said “hi”\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          oldText: 'he said "hi"',
+          newText: "HELLO",
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(getText(result)).toContain("Updated sample.txt");
+      expect(result.details).toMatchObject({
+        compatibility: {
+          used: true,
+          strategy: "legacy-top-level-replace",
+          matchCount: 1,
+          fuzzyMatch: true,
+        },
+      });
+      expect(await readFile(path, "utf-8")).toBe("HELLO\n");
+    });
+  });
+
   it("falls back to legacy replace when edits is an empty array", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
@@ -271,7 +323,7 @@ describe("edit tool compatibility mode", () => {
   });
 });
 
-describe("registered schema accepts legacy payloads", () => {
+describe("execute accepts legacy payloads via hidden compatibility path", () => {
   it("legacy oldText/newText passes through execute()", async () => {
     await withTempFile("sample.txt", "hello world", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import Ajv from "ajv";
-import { assertEditRequest, hashlineEditToolSchema, registerEditTool } from "../../src/edit";
+import {
+  assertEditRequest,
+  hashlineEditToolSchema,
+  prepareEditArguments,
+  registerEditTool,
+} from "../../src/edit";
 
 describe("assertEditRequest", () => {
   it("rejects unknown or unsupported root fields", () => {
@@ -35,7 +40,7 @@ describe("assertEditRequest", () => {
     ).toThrow(/cannot mix legacy camelCase and snake_case/i);
   });
 
-  it("enforces mixed legacy-key semantics even when the published schema accepts the payload", () => {
+  it("still reports mixed legacy-key semantics explicitly after schema tightening", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
     const payload = {
@@ -45,7 +50,7 @@ describe("assertEditRequest", () => {
       new_text: "after",
     };
 
-    expect(validate(payload)).toBeTrue();
+    expect(validate(payload)).toBeFalse();
     expect(() => assertEditRequest(payload as any)).toThrow(
       /cannot mix legacy camelCase and snake_case/i,
     );
@@ -68,6 +73,17 @@ describe("assertEditRequest", () => {
       } as any),
     ).toThrow(/requires a "pos" anchor string/i);
   });
+
+  it("rejects non-string legacy key values after prepareEditArguments normalization", () => {
+    const prepared = prepareEditArguments({
+      path: "a.ts",
+      edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+      oldText: 123,
+    });
+    expect(() => assertEditRequest(prepared)).toThrow(
+      /must be a string/i,
+    );
+  });
 });
 
 describe("registerEditTool", () => {
@@ -83,7 +99,7 @@ describe("registerEditTool", () => {
     ).toBeTrue();
   });
 
-  it("publishes a schema that validates camelCase legacy payloads", () => {
+  it("publishes a schema that rejects top-level camelCase legacy payloads", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -93,10 +109,10 @@ describe("registerEditTool", () => {
         oldText: "before",
         newText: "after",
       }),
-    ).toBeTrue();
+    ).toBeFalse();
   });
 
-  it("publishes a schema that validates snake_case legacy payloads", () => {
+  it("publishes a schema that rejects top-level snake_case legacy payloads", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -106,10 +122,10 @@ describe("registerEditTool", () => {
         old_text: "before",
         new_text: "after",
       }),
-    ).toBeTrue();
+    ).toBeFalse();
   });
 
-  it("publishes a schema that still accepts strict edits when legacy fields are also present", () => {
+  it("publishes a schema that rejects strict edits mixed with top-level legacy fields", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -120,7 +136,7 @@ describe("registerEditTool", () => {
         oldText: "before",
         newText: "after",
       }),
-    ).toBeTrue();
+    ).toBeFalse();
   });
 
   it("publishes a top-level object schema for pi tool registration", () => {
@@ -128,10 +144,33 @@ describe("registerEditTool", () => {
     expect((hashlineEditToolSchema as any).anyOf).toBeUndefined();
   });
 
-  it("registers the same schema publicly", () => {
-    let registered: { parameters?: any } | undefined;
+  it("prepareEditArguments hides legacy top-level fields while keeping execute compatibility", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile(hashlineEditToolSchema as any);
+    const prepared = prepareEditArguments({
+      path: "a.ts",
+      oldText: "before",
+      newText: "after",
+    }) as Record<string, unknown>;
+
+    expect(validate(prepared)).toBeTrue();
+    expect(prepared.oldText).toBe("before");
+    expect(prepared.newText).toBe("after");
+    expect(Object.keys(prepared)).toEqual(["path"]);
+  });
+
+  it("registers prepareArguments so new pi runtimes can normalize resumed legacy calls before validation", () => {
+    let registered:
+      | {
+          parameters?: any;
+          prepareArguments?: (args: unknown) => unknown;
+        }
+      | undefined;
     const pi = {
-      registerTool(tool: { parameters?: any }) {
+      registerTool(tool: {
+        parameters?: any;
+        prepareArguments?: (args: unknown) => unknown;
+      }) {
         registered = tool;
       },
     } as any;
@@ -139,5 +178,17 @@ describe("registerEditTool", () => {
     registerEditTool(pi);
 
     expect(registered?.parameters).toEqual(hashlineEditToolSchema);
+    expect(typeof registered?.prepareArguments).toBe("function");
+    expect(
+      (registered?.prepareArguments as (args: unknown) => unknown)({
+        path: "a.ts",
+        oldText: "before",
+        newText: "after",
+      }),
+    ).toEqual(prepareEditArguments({
+      path: "a.ts",
+      oldText: "before",
+      newText: "after",
+    }));
   });
 });
