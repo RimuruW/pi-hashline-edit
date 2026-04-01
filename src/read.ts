@@ -54,20 +54,37 @@ function normalizePositiveInteger(
   return value;
 }
 
+function getPreviewLines(text: string): string[] {
+  if (text.length === 0) {
+    return [];
+  }
+
+  const lines = text.split("\n");
+  return text.endsWith("\n") ? lines.slice(0, -1) : lines;
+}
+
 export function formatHashlineReadPreview(
   text: string,
   options: { offset?: number; limit?: number },
 ): { text: string; truncation?: TruncationResult } {
-  const allLines = text.split("\n");
+  const allLines = getPreviewLines(text);
   const totalLines = allLines.length;
   const startLine = normalizePositiveInteger(options.offset, "offset") ?? 1;
-  if (startLine > totalLines) {
-    const suggestion =
-      totalLines === 0
-        ? "The file is empty."
-        : `Use offset=1 to read from the start, or offset=${totalLines} to read the last line.`;
+  if (totalLines === 0) {
+    if (startLine === 1) {
+      return {
+        text: "File is empty. Use edit with prepend or append and omit pos to insert content.",
+      };
+    }
+
     return {
-      text: `Offset ${startLine} is beyond end of file (${totalLines} lines total). ${suggestion}`,
+      text: `Offset ${startLine} is beyond end of file (0 lines total). The file is empty. Use edit with prepend or append and omit pos to insert content.`,
+    };
+  }
+
+  if (startLine > totalLines) {
+    return {
+      text: `Offset ${startLine} is beyond end of file (${totalLines} lines total). Use offset=1 to read from the start, or offset=${totalLines} to read the last line.`,
     };
   }
 
