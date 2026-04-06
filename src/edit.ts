@@ -497,6 +497,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // `params` may already be the object returned by `prepareArguments`, which
+      // preserves legacy top-level replace fields as hidden properties for execute.
       assertEditRequest(params);
 
       const normalizedParams = params as EditRequestParams;
