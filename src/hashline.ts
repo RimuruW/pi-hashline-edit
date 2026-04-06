@@ -916,13 +916,11 @@ export function applyHashlineEdits(
         if (edit.pos) {
           fileLines.splice(edit.pos.line - 1, 0, ...inserted);
           trackRange(edit.pos.line, edit.pos.line + inserted.length - 1);
+        } else if (fileLines.length === 1 && fileLines[0] === "") {
+          fileLines.splice(0, 1, ...inserted);
+          trackRange(1, inserted.length);
         } else {
-          if (fileLines.length === 1 && fileLines[0] === "") {
-            fileLines.splice(0, 1, ...inserted);
-            trackRange(1, inserted.length);
-          } else {
-            fileLines.splice(0, 0, ...inserted);
-          }
+          fileLines.splice(0, 0, ...inserted);
           trackRange(1, inserted.length);
         }
         break;
