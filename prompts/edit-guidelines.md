@@ -1,5 +1,0 @@
-- Use edit for precise changes with LINE#HASH anchors from read output.
-- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls.
-- Each edit in edits[] targets anchors from the same pre-edit snapshot. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
-- Keep edits as small as possible and copy indentation exactly from read output. Do not pad with large unchanged regions.
-- After a successful edit, you may reuse the returned `LINE#HASH` anchors for subsequent edits on the same file without calling read again — but only for edits in the same region. Use read for distant edits.

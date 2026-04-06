@@ -38,11 +38,11 @@ fresh anchors for that region.
 </chained-edits>
 
 <examples>
-- Replace one line: `{ op: "replace", pos: "12#MQ", lines: ["const x = 1;"] }`
-- Replace a range: `{ op: "replace", pos: "12#MQ", end: "14#VR", lines: ["merged"] }`
-- Delete a range: `{ op: "replace", pos: "12#MQ", end: "14#VR", lines: [] }`
-- Append after a line: `{ op: "append", pos: "20#NK", lines: ["footer();"] }`
-- Prepend at file start: `{ op: "prepend", lines: ["// header"] }`
+- replace one line: `{op:"replace",pos:"12#MQ",lines:["const x = 1;"]}`
+- replace range: `{op:"replace",pos:"12#MQ",end:"14#VR",lines:["merged"]}`
+- delete range: `{op:"replace",pos:"12#MQ",end:"14#VR",lines:[]}`
+- append after line: `{op:"append",pos:"20#NK",lines:["footer();"]}`
+- prepend at BOF: `{op:"prepend",lines:["// header"]}`
 </examples>
 
 <constraints>
@@ -50,6 +50,8 @@ fresh anchors for that region.
 - `lines` must be literal file content. Do not include `LINE#HASH:` prefixes.
 - Extra keys inside edit entries are rejected.
 - Submitting content identical to the current file is rejected.
+- Each edit targets anchors from the same pre-edit snapshot. Do not emit overlapping or nested edits — merge nearby changes into one entry.
+- Keep each edit as small as possible; do not pad with large unchanged regions.
 </constraints>
 
 <errors>
