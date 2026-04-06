@@ -27,6 +27,16 @@ Each entry has an `op` and a `lines` array of replacement content.
 Anchor format: `"LINE#HASH"` copied from `read` output (e.g. `"12#MQ"`).
 </operations>
 
+<chained-edits>
+After a successful edit, the tool returns an "Updated anchors" block with fresh
+`LINE#HASH` references for the changed region. You may use these anchors directly
+in your next edit call on the same file without calling `read` again, provided
+your next edit targets the same region or nearby lines.
+
+If your next edit targets a distant part of the file, use `read` first to get
+fresh anchors for that region.
+</chained-edits>
+
 <examples>
 - Replace one line: `{ op: "replace", pos: "12#MQ", lines: ["const x = 1;"] }`
 - Replace a range: `{ op: "replace", pos: "12#MQ", end: "14#VR", lines: ["merged"] }`

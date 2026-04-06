@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import register from "../../index";
-import { formatHashlineReadPreview } from "../../src/read";
+import { formatHashlineReadPreview, formatHashlineRegion } from "../../src/read";
+import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 describe("formatHashlineReadPreview", () => {
@@ -66,6 +67,29 @@ describe("formatHashlineReadPreview", () => {
     expect(() =>
       formatHashlineReadPreview("alpha\nbeta", { limit: 0 }),
     ).toThrow(/limit.*positive integer/i);
+  });
+});
+
+describe("formatHashlineRegion", () => {
+  it("formats lines with LINE#HASH anchors starting from the given line number", () => {
+    const lines = ["alpha", "beta", "gamma"];
+    const result = formatHashlineRegion(lines, 5);
+
+    expect(result).toBe(
+      `5#${computeLineHash(5, "alpha")}:alpha\n` +
+      `6#${computeLineHash(6, "beta")}:beta\n` +
+      `7#${computeLineHash(7, "gamma")}:gamma`,
+    );
+  });
+
+  it("handles a single line", () => {
+    const result = formatHashlineRegion(["hello"], 1);
+    expect(result).toBe(`1#${computeLineHash(1, "hello")}:hello`);
+  });
+
+  it("handles empty array", () => {
+    const result = formatHashlineRegion([], 1);
+    expect(result).toBe("");
   });
 });
 

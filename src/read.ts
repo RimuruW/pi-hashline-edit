@@ -63,6 +63,18 @@ function getPreviewLines(text: string): string[] {
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
 }
 
+export function formatHashlineRegion(
+  lines: string[],
+  startLine: number,
+): string {
+  return lines
+    .map((line, index) => {
+      const lineNumber = startLine + index;
+      return `${lineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
+    })
+    .join("\n");
+}
+
 export function formatHashlineReadPreview(
   text: string,
   options: { offset?: number; limit?: number },

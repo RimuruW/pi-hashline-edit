@@ -21,11 +21,13 @@ import {
 import { writeFileAtomically } from "./fs-write";
 import {
   applyHashlineEdits,
+  computeAffectedLineRange,
   resolveEditAnchors,
   type HashlineToolEdit,
 } from "./hashline";
 import { classifyFileKind } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
+import { formatHashlineRegion } from "./read";
 import { throwIfAborted } from "./runtime";
 
 const hashlineEditLinesSchema = Type.Union([
@@ -573,6 +575,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
             }>
           | undefined;
         let firstChangedLine: number | undefined;
+        let lastChangedLine: number | undefined;
         let compatibilityDetails: CompatibilityDetails | undefined;
 
         if (toolEdits.length > 0) {
@@ -582,6 +585,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
           warnings = anchorResult.warnings;
           noopEdits = anchorResult.noopEdits;
           firstChangedLine = anchorResult.firstChangedLine;
+          lastChangedLine = anchorResult.lastChangedLine;
         } else {
           const normalizedOldText = normalizeToLF(legacy!.oldText);
           const normalizedNewText = normalizeToLF(legacy!.newText);
@@ -631,11 +635,27 @@ export function registerEditTool(pi: ExtensionAPI): void {
         const warningsBlock = warnings?.length
           ? `\n\nWarnings:\n${warnings.join("\n")}`
           : "";
+
+        // Compute updated anchors for chaining edits without re-reading.
+        const resultLines = result.split("\n");
+        const anchorRange = computeAffectedLineRange({
+          firstChangedLine,
+          lastChangedLine,
+          resultLineCount: resultLines.length,
+        });
+        const anchorsBlock = anchorRange
+          ? (() => {
+              const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
+              const formatted = formatHashlineRegion(region, anchorRange.start);
+              return `\n\n--- Updated anchors (lines ${anchorRange.start}-${anchorRange.end}; use these for subsequent edits in this region, or read for distant edits) ---\n${formatted}`;
+            })()
+          : "";
+
         return {
           content: [
             {
               type: "text",
-              text: `Updated ${path}\n${summaryLine}${previewBlock}${warningsBlock}`,
+              text: `Updated ${path}\n${summaryLine}${previewBlock}${warningsBlock}${anchorsBlock}`,
             },
           ],
           details: {

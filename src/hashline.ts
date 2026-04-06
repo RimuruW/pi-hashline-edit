@@ -621,17 +621,19 @@ export function applyHashlineEdits(
 ): {
   content: string;
   firstChangedLine: number | undefined;
+  lastChangedLine: number | undefined;
   warnings?: string[];
   noopEdits?: NoopEdit[];
 } {
   throwIfAborted(signal);
-  if (!edits.length) return { content, firstChangedLine: undefined };
+  if (!edits.length) return { content, firstChangedLine: undefined, lastChangedLine: undefined };
 
   const workingEdits = edits.map(cloneHashlineEdit);
   const fileLines = content.split("\n");
   const hasTerminalNewline = content.endsWith("\n");
   const origLines = [...fileLines];
   let firstChanged: number | undefined;
+  let lastChanged: number | undefined;
   const noopEdits: NoopEdit[] = [];
   const warnings: string[] = [];
 
@@ -860,7 +862,7 @@ export function applyHashlineEdits(
             );
           }
           fileLines.splice(edit.pos.line - 1, count, ...newLines);
-          track(edit.pos.line);
+          trackRange(edit.pos.line, edit.pos.line + newLines.length - 1);
         }
         break;
       }
@@ -880,15 +882,15 @@ export function applyHashlineEdits(
               ? fileLines.length - 1
               : edit.pos.line;
           fileLines.splice(insertAt, 0, ...inserted);
-          track(insertAt + 1);
+          trackRange(insertAt + 1, insertAt + inserted.length);
         } else {
           if (fileLines.length === 1 && fileLines[0] === "") {
             fileLines.splice(0, 1, ...inserted);
-            track(1);
+            trackRange(1, inserted.length);
           } else {
             const insertAt = hasTerminalNewline ? fileLines.length - 1 : fileLines.length;
             fileLines.splice(insertAt, 0, ...inserted);
-            track(insertAt + 1);
+            trackRange(insertAt + 1, insertAt + inserted.length);
           }
         }
         break;
@@ -905,14 +907,15 @@ export function applyHashlineEdits(
         }
         if (edit.pos) {
           fileLines.splice(edit.pos.line - 1, 0, ...inserted);
-          track(edit.pos.line);
+          trackRange(edit.pos.line, edit.pos.line + inserted.length - 1);
         } else {
           if (fileLines.length === 1 && fileLines[0] === "") {
             fileLines.splice(0, 1, ...inserted);
+            trackRange(1, inserted.length);
           } else {
             fileLines.splice(0, 0, ...inserted);
           }
-          track(1);
+          trackRange(1, inserted.length);
         }
         break;
       }
@@ -923,6 +926,7 @@ export function applyHashlineEdits(
   return {
     content: fileLines.join("\n"),
     firstChangedLine: firstChanged,
+    lastChangedLine: lastChanged,
     ...(warnings.length ? { warnings } : {}),
     ...(noopEdits.length ? { noopEdits } : {}),
   };
@@ -931,5 +935,53 @@ export function applyHashlineEdits(
     if (firstChanged === undefined || line < firstChanged) {
       firstChanged = line;
     }
+    if (lastChanged === undefined || line > lastChanged) {
+      lastChanged = line;
+    }
   }
+
+  function trackRange(start: number, end: number): void {
+    track(start);
+    track(end);
+  }
+}
+
+// ─── Affected-line computation (for returning anchors after edit) ───────
+
+const ANCHOR_CONTEXT_LINES = 2;
+const ANCHOR_MAX_OUTPUT_LINES = 12;
+
+/**
+ * Compute the post-edit line range covering changed lines plus context.
+ * Uses `firstChangedLine` and `lastChangedLine` from the edit result for
+ * precise bounds. Returns null if the range (with context) exceeds the
+ * output budget, signalling that the LLM should re-read instead.
+ */
+export function computeAffectedLineRange(params: {
+  firstChangedLine: number | undefined;
+  lastChangedLine: number | undefined;
+  resultLineCount: number;
+  contextLines?: number;
+  maxOutputLines?: number;
+}): { start: number; end: number } | null {
+  const {
+    firstChangedLine,
+    lastChangedLine,
+    resultLineCount,
+    contextLines = ANCHOR_CONTEXT_LINES,
+    maxOutputLines = ANCHOR_MAX_OUTPUT_LINES,
+  } = params;
+
+  if (firstChangedLine === undefined || lastChangedLine === undefined) {
+    return null;
+  }
+
+  const start = Math.max(1, firstChangedLine - contextLines);
+  const end = Math.min(resultLineCount, lastChangedLine + contextLines);
+
+  if (end - start + 1 > maxOutputLines) {
+    return null;
+  }
+
+  return { start, end };
 }
