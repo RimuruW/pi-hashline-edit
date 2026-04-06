@@ -48,7 +48,6 @@ describe("computeLegacyEditLineRange", () => {
 
   it("tracks deleting all content", () => {
     const result = computeLegacyEditLineRange("a\nb\nc", "");
-    expect(result).not.toBeNull();
-    expect(result!.firstChangedLine).toBeLessThanOrEqual(result!.lastChangedLine);
+    expect(result).toEqual({ firstChangedLine: 1, lastChangedLine: 1 });
   });
 });

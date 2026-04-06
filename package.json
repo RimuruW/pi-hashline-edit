@@ -1,6 +1,6 @@
 {
   "name": "pi-hashline-edit",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Hashline read/edit tool override for pi-coding-agent",
   "repository": {
     "type": "git",

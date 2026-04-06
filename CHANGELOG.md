@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-06
+
+### Added
+
+- **Updated anchors in edit results.** Each successful edit now returns a `--- Updated anchors ---` block with `LINE#HASH` anchors for the changed region, enabling chained edits without a full re-read.
+- **Prepend into empty file handled correctly.** `prepend` with no `pos` now correctly replaces the empty sentinel line instead of inserting after it.
+- **Empty range deletes and empty edit results.** Deleting an entire range and producing an empty file now reports the correct changed span without emitting sentinel anchors.
+- **Regression test coverage for anchor tracking.** Added tests for append/prepend tracking, autocorrect delta recomputation, updated anchor regions, and empty-file ranges.
+
+### Fixed
+
+- **Legacy edit line-range and multi-line delete tracking.** `computeLegacyEditLineRange` now correctly reports changed spans for pure deletions, head/tail deletions, and full-content deletions.
+- **Chained anchors for legacy top-level replace.** Legacy `oldText`/`newText` payloads now compute and return updated anchors in the edit result.
+- **Final-document offsets for append tracking.** Append edits now use original coordinates plus computed offsets so `firstChangedLine`/`lastChangedLine` remain accurate after prepends and autocorrections shift content.
+- **Replace delta recomputation after autocorrection.** When range-replace autocorrection strips leading or trailing duplicate lines, the delta map is updated so subsequent `computeOffset` calls for edits above use correct values.
+- **Sentinel anchor emission.** The terminal newline sentinel is no longer included in `Updated anchors` blocks for EOF appends on newline-terminated files.
+- **Non-string legacy key values preserved.** `prepareEditArguments` now stores non-string legacy values as non-enumerable properties instead of silently dropping them, enabling clear type errors at assertion.
+- **Noisy warning heuristic removed.** The "line-shift noise" warning was removed as it produced false positives on legitimate edits.
+- **Fuzzy regexes tidied and error handling unified.** Exported fuzzy unicode regexes are now shared from `hashline.ts`; unused references removed.
+- **Read advisory for empty files.** `read` on an empty file returns a clear advisory suggesting `prepend`/`append` instead of a synthetic empty-line anchor.
+- **Fuzzy anchor validation tightened.** Fuzzy `textHint` validation now rejects cases where the hash was computed against an arbitrary (non-canonical) string.
+
+### Changed
+
+- **Refactored edit tool to use shared `withFileMutationQueue`.** Removed the local queue implementation in favor of the upstream Pi utility.
+- **Schema tightened for strict hashline payloads.** `prepareEditArguments` normalizes legacy fields before schema validation, improving compatibility with resumed sessions.
+- **Edit guidelines merged into edit.md prompt.** The separate `edit-guidelines.md` prompt file has been merged into `edit.md`.
+- **Dependency updates.** Bumped to pi 0.64.0, tightened peer dependency minimums, added `pi-tui` peer dep.
+
 ## [0.4.1] - 2026-03-27
 
 ### Fixed
