@@ -250,6 +250,20 @@ describe("applyHashlineEdits — lastChangedLine tracking", () => {
     expect(result.lastChangedLine).toBe(2);
   });
 
+  it("tracks lastChangedLine correctly for multi-line delete", () => {
+    const content = "aaa\nbbb\nccc\nddd\neee\nfff\nggg";
+    const edits: HashlineEdit[] = [{
+      op: "replace",
+      pos: makeTag(2, "bbb"),
+      end: makeTag(4, "ddd"),
+      lines: [],
+    }];
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.firstChangedLine).toBe(2);
+    expect(result.lastChangedLine).toBe(4);
+  });
+
   it("tracks lastChangedLine for append with terminal newline", () => {
     const content = "aaa\nbbb\n";
     const edits: HashlineEdit[] = [{ op: "append", lines: ["ccc"] }];

@@ -639,16 +639,18 @@ export function applyHashlineEdits(
   // final positions after all edits. This avoids the stale-position bug where
   // track() records coordinates during bottom-up mutation that later get shifted
   // by edits above them (e.g. prepend at top shifts a tracked replace downward).
-  const affectedEdits: Array<{ fStart: number; newLength: number }> = [];
+  const affectedEdits: Array<{
+    fStart: number;
+    newLength: number;
+    originalLength: number;
+  }> = [];
 
-  function trackEdit(fStart: number, newLength: number): void {
-    if (newLength > 0) {
-      affectedEdits.push({ fStart, newLength });
-    }
-    // Deletes with newLength === 0 are tracked as a point at the deletion site.
-    else {
-      affectedEdits.push({ fStart, newLength: 0 });
-    }
+  function trackEdit(
+    fStart: number,
+    newLength: number,
+    originalLength = newLength,
+  ): void {
+    affectedEdits.push({ fStart, newLength, originalLength });
   }
 
   // Validate all refs before mutation
@@ -851,7 +853,11 @@ export function applyHashlineEdits(
             break;
           }
           fileLines.splice(edit.pos.line - 1, 1, ...newLines);
-          trackEdit(edit.pos.line + computeOffset(edit.pos.line - 1), newLines.length);
+          trackEdit(
+            edit.pos.line + computeOffset(edit.pos.line - 1),
+            newLines.length,
+            newLines.length === 0 ? 1 : newLines.length,
+          );
         } else {
           const count = edit.end.line - edit.pos.line + 1;
           const orig = origLines.slice(
@@ -919,7 +925,11 @@ export function applyHashlineEdits(
               }
             }
           }
-          trackEdit(edit.pos.line + computeOffset(edit.pos.line - 1), newLines.length);
+          trackEdit(
+            edit.pos.line + computeOffset(edit.pos.line - 1),
+            newLines.length,
+            newLines.length === 0 ? count : newLines.length,
+          );
         }
         break;
       }
@@ -995,8 +1005,9 @@ export function applyHashlineEdits(
   if (affectedEdits.length > 0) {
     let minFinal = Infinity;
     let maxFinal = -Infinity;
-    for (const { fStart, newLength } of affectedEdits) {
-      const fEnd = newLength > 0 ? fStart + newLength - 1 : fStart;
+    for (const { fStart, newLength, originalLength } of affectedEdits) {
+      const affectedLength = newLength > 0 ? newLength : originalLength;
+      const fEnd = fStart + affectedLength - 1;
       if (fStart < minFinal) minFinal = fStart;
       if (fEnd > maxFinal) maxFinal = fEnd;
     }
@@ -1117,8 +1128,20 @@ export function computeLegacyEditLineRange(
     return line;
   }
 
-  const firstChangedLine = indexToLine(firstDiff, result);
-  const lastChangedLine = indexToLine(lastRes, result);
+  const firstChangedLine = indexToLine(firstDiff + 1, result);
+  let lastChangedLine: number;
+  if (lastRes < firstDiff) {
+    // Deletion: suffix match backtracked into the unchanged prefix region.
+    // The changed span extends to the last line of the result document.
+    const resultLines = result.split("\n");
+    lastChangedLine = result.endsWith("\n") ? resultLines.length - 1 : resultLines.length;
+  } else if (firstDiff === 0 && original.length > 0 && result.endsWith(original)) {
+    // Pure prepend: original content is intact at the end, only new lines were
+    // inserted before it. The changed span covers only the prepended lines.
+    lastChangedLine = firstChangedLine;
+  } else {
+    lastChangedLine = indexToLine(lastRes + 1, result);
+  }
 
   return { firstChangedLine, lastChangedLine };
 }
