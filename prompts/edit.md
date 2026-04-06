@@ -92,6 +92,7 @@ Multiple edits in one call:
 </examples>
 
 <constraints>
+- `"edits"` must be a real JSON array in the tool call arguments — never a JSON-encoded string. The framework expects `edits: [...]`, not `edits: "[...]"`.
 - Copy indentation exactly from `read` output.
 - `lines` must be literal file content. Do not include `LINE#HASH:` prefixes.
 - Extra keys inside edit entries are rejected.
