@@ -7,8 +7,13 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 </usage>
 
 <payload>
-```
-{ path, edits: [{ op, pos, end, lines }] }
+```json
+{
+  "path": "src/main.ts",
+  "edits": [
+    { "op": "replace", "pos": "12#MQ", "lines": ["..."] }
+  ]
+}
 ```
 
 - `path` — target file path.
@@ -19,8 +24,8 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 Each entry has an `op` and a `lines` array of replacement content.
 
 - `replace` — replace one line (`pos`) or an inclusive range (`pos` + `end`). `pos` is required.
-- `append` — insert after `pos`. Omit `pos` to append at end of file.
-- `prepend` — insert before `pos`. Omit `pos` to prepend at beginning of file.
+- `append` — insert lines after `pos`. Omit `pos` to append at EOF.
+- `prepend` — insert lines before `pos`. Omit `pos` to prepend at BOF.
 
 `end` is only valid with `replace`.
 
@@ -38,11 +43,52 @@ fresh anchors for that region.
 </chained-edits>
 
 <examples>
-- replace one line: `{op:"replace",pos:"12#MQ",lines:["const x = 1;"]}`
-- replace range: `{op:"replace",pos:"12#MQ",end:"14#VR",lines:["merged"]}`
-- delete range: `{op:"replace",pos:"12#MQ",end:"14#VR",lines:[]}`
-- append after line: `{op:"append",pos:"20#NK",lines:["footer();"]}`
-- prepend at BOF: `{op:"prepend",lines:["// header"]}`
+
+Replace one line:
+
+```json
+{
+  "path": "src/main.ts",
+  "edits": [
+    { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
+  ]
+}
+```
+
+Replace a range:
+
+```json
+{
+  "path": "src/main.ts",
+  "edits": [
+    { "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": ["merged"] }
+  ]
+}
+```
+
+Delete a range:
+
+```json
+{
+  "path": "src/main.ts",
+  "edits": [
+    { "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": [] }
+  ]
+}
+```
+
+Multiple edits in one call:
+
+```json
+{
+  "path": "README.md",
+  "edits": [
+    { "op": "replace", "pos": "33#YW", "lines": ["updated line"] },
+    { "op": "append", "pos": "50#NK", "lines": ["", "## New Section"] },
+    { "op": "prepend", "lines": ["// header"] }
+  ]
+}
+```
 </examples>
 
 <constraints>
