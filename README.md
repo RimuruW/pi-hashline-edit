@@ -2,7 +2,7 @@
 
 # pi-hashline-edit
 
-A [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) extension that replaces the built-in `read` and `edit` tools with a hash-anchored line-editing workflow.
+A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) extension that replaces the built-in `read` and `edit` tools with a hash-anchored line-editing workflow.
 
 Every line returned by `read` carries a short content hash. Edits reference these hashes instead of raw text, so the tool can detect stale context and reject outdated changes before they reach the file.
 
@@ -79,7 +79,7 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 
 ## Hashing
 
-Hashes are computed with [xxhashjs](https://github.com/nicedoc/xxhashjs) (xxHash32), then mapped to a 2-character string from a custom 16-character alphabet.
+Hashes are computed with [xxhashjs](https://github.com/pierrec/js-xxhash) (xxHash32), then mapped to a 2-character string from a custom 16-character alphabet.
 
 The alphabet (`ZPMQVRWSNKTXJBYH`) excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O), so a reference like `5#MQ` can never be confused with code content, hex literals, or English words.
 
