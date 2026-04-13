@@ -7,14 +7,13 @@ import { makeFakePiRegistry } from "../support/fixtures";
 
 /**
  * Permission-error tests rely on chmod(0o000) producing EACCES/EPERM.
- * This is POSIX-specific: on Windows chmod is a no-op (or throws ENOTSUP),
- * and on some non-POSIX filesystems it silently succeeds without restricting access.
+ * This is POSIX-specific: on Windows chmod is a no-op (or throws ENOTSUP).
  * Skip the entire suite on Windows; root already skips via the existing check.
  */
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
-const isNonPOSIX = process.platform === "win32";
+const isWindows = process.platform === "win32";
 
-describe.skipIf(isRoot || isNonPOSIX)("permission errors", () => {
+describe.skipIf(isRoot || isWindows)("permission errors", () => {
   let tempRoot: string;
   let tempDir: string;
 
