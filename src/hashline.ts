@@ -71,8 +71,15 @@ function stripDiffPreviewPrefix(line: string): string | null {
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
 
+const _hasherCache = new Map<number, ReturnType<typeof XXH.h32>>();
+
 function xxh32(input: string, seed = 0): number {
-  return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
+  let hasher = _hasherCache.get(seed);
+  if (!hasher) {
+    hasher = XXH.h32(seed);
+    _hasherCache.set(seed, hasher);
+  }
+  return hasher.update(input).digest().toNumber() >>> 0;
 }
 
 export function computeLineHash(idx: number, line: string): string {
