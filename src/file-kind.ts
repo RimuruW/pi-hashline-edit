@@ -19,12 +19,22 @@ function hasNullByte(buffer: Uint8Array): boolean {
   return buffer.includes(0);
 }
 
-function isValidUtf8(buffer: Uint8Array): boolean {
+function isValidUtf8(
+  buffer: Uint8Array,
+  options: { allowIncompleteTrailingSequence: boolean },
+): boolean {
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    decoder.decode(
+      buffer,
+      options.allowIncompleteTrailingSequence ? { stream: true } : undefined,
+    );
     return true;
-  } catch (_error: unknown) {
-    return false;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) {
+      return false;
+    }
+    throw error;
   }
 }
 
@@ -61,7 +71,7 @@ export async function classifyFileKind(filePath: string): Promise<FileKind> {
       };
     }
 
-    if (!isValidUtf8(sample)) {
+    if (!isValidUtf8(sample, { allowIncompleteTrailingSequence: pathStat.size > bytesRead })) {
       return {
         kind: "binary",
         description: "invalid UTF-8",

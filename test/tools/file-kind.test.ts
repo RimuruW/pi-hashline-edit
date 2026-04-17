@@ -66,6 +66,20 @@ describe("classifyFileKind", () => {
     });
   });
 
+  it("classifies utf-8 text as text when the sniff window ends mid-code-point", async () => {
+    const prefix = new Uint8Array(8190).fill(0x61);
+    const emDash = new Uint8Array([0xe2, 0x80, 0x94]);
+    const suffix = new Uint8Array([0x0a]);
+    const bytes = new Uint8Array(prefix.length + emDash.length + suffix.length);
+    bytes.set(prefix, 0);
+    bytes.set(emDash, prefix.length);
+    bytes.set(suffix, prefix.length + emDash.length);
+
+    await withTempBytes("sample.md", bytes, async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+    });
+  });
+
   it("classifies files with null bytes as binary", async () => {
     await withTempBytes(
       "sample.bin",
@@ -105,6 +119,32 @@ describe("file kind guards in tools", () => {
           { cwd } as any,
         ),
       ).rejects.toThrow(/Path is a directory: nested/);
+    });
+  });
+
+  it("read accepts utf-8 text when the sniff window ends mid-code-point", async () => {
+    const prefix = new Uint8Array(8190).fill(0x61);
+    const emDash = new Uint8Array([0xe2, 0x80, 0x94]);
+    const suffix = new Uint8Array([0x0a]);
+    const bytes = new Uint8Array(prefix.length + emDash.length + suffix.length);
+    bytes.set(prefix, 0);
+    bytes.set(emDash, prefix.length);
+    bytes.set(suffix, prefix.length + emDash.length);
+
+    await withTempBytes("sample.md", bytes, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      const result = await readTool.execute(
+        "r1",
+        { path: "sample.md" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(getText(result)).toContain("—");
     });
   });
 
