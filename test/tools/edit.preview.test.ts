@@ -1,3 +1,4 @@
+import { execFile } from "child_process";
 import { describe, expect, it } from "bun:test";
 import { chmod } from "fs/promises";
 import { computeEditPreview } from "../../src/edit";
@@ -66,6 +67,59 @@ describe("computeEditPreview", () => {
       } finally {
         await chmod(path, 0o644);
       }
+    });
+  });
+
+  it("uses the shared text loader for preview instead of classifying then re-reading text", async () => {
+    const fileKindModulePath = new URL("../../src/file-kind.ts", import.meta.url).href;
+    const editModulePath = new URL("../../src/edit.ts", import.meta.url).href;
+    const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
+
+    await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
+      const script = `
+import { mock } from "bun:test";
+
+const fileKindModulePath = ${JSON.stringify(fileKindModulePath)};
+const editModulePath = ${JSON.stringify(editModulePath)};
+const cwd = ${JSON.stringify(cwd)};
+const betaRef = ${JSON.stringify(betaRef)};
+
+mock.module(fileKindModulePath, () => ({
+  async loadFileKindAndText() {
+    return { kind: "text", text: "aaa\\nbbb\\nccc\\n" };
+  },
+  async classifyFileKind() {
+    throw new Error("preview should not call classifyFileKind on text paths");
+  },
+}));
+
+try {
+  const { computeEditPreview: computeSinglePassPreview } = await import(\`${editModulePath}?preview-single-pass=\${Date.now()}\`);
+  const preview = await computeSinglePassPreview(
+    {
+      path: "sample.txt",
+      edits: [{ op: "replace", pos: betaRef, lines: ["BBB"] }],
+    },
+    cwd,
+  );
+  console.log(JSON.stringify(preview));
+} finally {
+  mock.restore();
+}
+`;
+
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile(process.execPath, ["--eval", script], { cwd: process.cwd() }, (error, stdout) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(stdout);
+        });
+      });
+
+      const preview = JSON.parse(output) as { diff?: string; error?: string };
+      expect(preview.diff).toContain(":BBB");
     });
   });
 });

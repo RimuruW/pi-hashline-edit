@@ -9,10 +9,10 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { readFileSync } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess } from "fs/promises";
 import { constants } from "fs";
 import { normalizeToLF, stripBom } from "./edit-diff";
-import { classifyFileKind } from "./file-kind";
+import { loadFileKindAndText } from "./file-kind";
 import { computeLineHash, formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
@@ -173,25 +173,22 @@ export function registerReadTool(pi: ExtensionAPI): void {
       }
 
       throwIfAborted(signal);
-      const fileKind = await classifyFileKind(absolutePath);
-      if (fileKind.kind === "directory") {
+      const file = await loadFileKindAndText(absolutePath);
+      if (file.kind === "directory") {
         throw new Error(`Path is a directory: ${rawPath}. Use ls to inspect directories.`);
       }
 
-      if (fileKind.kind === "binary") {
-        throw new Error(`Path is a binary file: ${rawPath} (${fileKind.description}). Hashline read only supports UTF-8 text files and supported images.`);
+      if (file.kind === "binary") {
+        throw new Error(`Path is a binary file: ${rawPath} (${file.description}). Hashline read only supports UTF-8 text files and supported images.`);
       }
 
-      if (fileKind.kind === "image") {
+      if (file.kind === "image") {
         const builtinRead = createReadTool(ctx.cwd);
         return builtinRead.execute(_toolCallId, params, signal, _onUpdate, ctx);
       }
 
       throwIfAborted(signal);
-      const raw = (await fsReadFile(absolutePath)).toString("utf-8");
-      throwIfAborted(signal);
-
-      const normalized = normalizeToLF(stripBom(raw).text);
+      const normalized = normalizeToLF(stripBom(file.text).text);
       const preview = formatHashlineReadPreview(normalized, {
         offset: params.offset,
         limit: params.limit,

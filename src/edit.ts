@@ -5,7 +5,7 @@ import { withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { readFileSync } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { access as fsAccess } from "fs/promises";
 import {
   buildCompactHashlineDiffPreview,
   detectLineEnding,
@@ -27,7 +27,7 @@ import {
   resolveEditAnchors,
   type HashlineToolEdit,
 } from "./hashline";
-import { classifyFileKind } from "./file-kind";
+import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 
@@ -403,23 +403,22 @@ export async function computeEditPreview(
   }
 
   try {
-    const fileKind = await classifyFileKind(absolutePath);
-    if (fileKind.kind === "directory") {
+    const file = await loadFileKindAndText(absolutePath);
+    if (file.kind === "directory") {
       return { error: `Path is a directory: ${path}. Use ls to inspect directories.` };
     }
-    if (fileKind.kind === "image") {
+    if (file.kind === "image") {
       return {
         error: `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
       };
     }
-    if (fileKind.kind === "binary") {
+    if (file.kind === "binary") {
       return {
-        error: `Path is a binary file: ${path} (${fileKind.description}). Hashline edit only supports UTF-8 text files.`,
+        error: `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
       };
     }
 
-    const raw = (await fsReadFile(absolutePath)).toString("utf-8");
-    const originalNormalized = normalizeToLF(stripBom(raw).text);
+    const originalNormalized = normalizeToLF(stripBom(file.text).text);
 
     let result: string;
     if (toolEdits.length > 0) {
@@ -535,26 +534,23 @@ export function registerEditTool(pi: ExtensionAPI): void {
         }
 
         throwIfAborted(signal);
-        const fileKind = await classifyFileKind(absolutePath);
-        if (fileKind.kind === "directory") {
+        const file = await loadFileKindAndText(absolutePath);
+        if (file.kind === "directory") {
           throw new Error(`Path is a directory: ${path}. Use ls to inspect directories.`);
         }
-        if (fileKind.kind === "image") {
+        if (file.kind === "image") {
           throw new Error(
             `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
           );
         }
-        if (fileKind.kind === "binary") {
+        if (file.kind === "binary") {
           throw new Error(
-            `Path is a binary file: ${path} (${fileKind.description}). Hashline edit only supports UTF-8 text files.`,
+            `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
           );
         }
 
         throwIfAborted(signal);
-        const raw = (await fsReadFile(absolutePath)).toString("utf-8");
-        throwIfAborted(signal);
-
-        const { bom, text: content } = stripBom(raw);
+        const { bom, text: content } = stripBom(file.text);
         const originalEnding = detectLineEnding(content);
         const originalNormalized = normalizeToLF(content);
 

@@ -1,11 +1,23 @@
 import { chmod, link, lstat, readFile, readlink, stat, symlink } from "fs/promises";
 import { describe, expect, it } from "bun:test";
 import { join } from "path";
-import { writeFileAtomically } from "../../src/fs-write";
 import { withTempFile } from "../support/fixtures";
+
+async function loadWriteFileAtomically(): Promise<(
+  path: string,
+  content: string,
+) => Promise<void>> {
+  const moduleUrl = new URL(
+    `../../src/fs-write.ts?fs-write-test=${Date.now()}-${Math.random()}`,
+    import.meta.url,
+  ).href;
+  const module = await import(moduleUrl);
+  return module.writeFileAtomically;
+}
 
 describe("writeFileAtomically", () => {
   it("preserves the target file mode when replacing an existing file", async () => {
+    const writeFileAtomically = await loadWriteFileAtomically();
     await withTempFile("script.sh", "echo before\n", async ({ path }) => {
       await chmod(path, 0o755);
 
@@ -17,6 +29,7 @@ describe("writeFileAtomically", () => {
   });
 
   it("updates a symlink target without replacing the symlink", async () => {
+    const writeFileAtomically = await loadWriteFileAtomically();
     await withTempFile("target.txt", "before\n", async ({ cwd, path: targetPath }) => {
       const linkPath = `${cwd}/linked.txt`;
       await symlink("target.txt", linkPath);
@@ -30,6 +43,7 @@ describe("writeFileAtomically", () => {
   });
 
   it("follows a dangling symlink chain through to the missing terminal target", async () => {
+    const writeFileAtomically = await loadWriteFileAtomically();
     await withTempFile("seed.txt", "seed\n", async ({ cwd }) => {
       const intermediateLinkPath = join(cwd, "level-2.txt");
       const topLinkPath = join(cwd, "level-1.txt");
@@ -49,6 +63,7 @@ describe("writeFileAtomically", () => {
   });
 
   it("replaces only the addressed hard-link path via atomic rename", async () => {
+    const writeFileAtomically = await loadWriteFileAtomically();
     await withTempFile("primary.txt", "before\n", async ({ cwd, path: primaryPath }) => {
       const siblingPath = join(cwd, "sibling.txt");
       await link(primaryPath, siblingPath);

@@ -1,9 +1,9 @@
 import { execFile } from "child_process";
 import { describe, expect, it } from "bun:test";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
+import { access, appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
-import { classifyFileKind } from "../../src/file-kind";
+import { classifyFileKind, loadFileKindAndText } from "../../src/file-kind";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 async function createTempRoot(): Promise<string> {
@@ -117,6 +117,23 @@ describe("classifyFileKind", () => {
         kind: "binary",
         description: "invalid UTF-8",
       });
+    });
+  });
+
+  it("reads until EOF when the file grows after the initial size snapshot", async () => {
+    const initialText = "a".repeat(8 * 1024 * 1024);
+    await withTempFile("growing.txt", initialText, async ({ path }) => {
+      const loadPromise = loadFileKindAndText(path);
+      await Bun.sleep(1);
+      await appendFile(path, "TAIL\n", "utf-8");
+
+      const loaded = await loadPromise;
+      expect(loaded.kind).toBe("text");
+      if (loaded.kind !== "text") {
+        return;
+      }
+      expect(loaded.text.endsWith("TAIL\n")).toBeTrue();
+      expect(loaded.text.length).toBe(initialText.length + 5);
     });
   });
 

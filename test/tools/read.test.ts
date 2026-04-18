@@ -1,3 +1,4 @@
+import { execFile } from "child_process";
 import { describe, it, expect } from "bun:test";
 import register from "../../index";
 import { formatHashlineRegion } from "../../src/hashline";
@@ -132,6 +133,69 @@ describe("read tool protocol", () => {
       expect(result.content[0].text).toContain(":alpha");
       expect(result.content[0].text).toContain(":beta");
       expect(result.content[0].text).not.toContain("3#");
+    });
+  });
+
+  it("uses the shared text loader instead of classifying then re-reading text files", async () => {
+    const fileKindModulePath = new URL("../../src/file-kind.ts", import.meta.url).href;
+    const indexModulePath = new URL("../../index.ts", import.meta.url).href;
+
+    await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
+      const script = `
+import { mock } from "bun:test";
+
+const fileKindModulePath = ${JSON.stringify(fileKindModulePath)};
+const indexModulePath = ${JSON.stringify(indexModulePath)};
+const cwd = ${JSON.stringify(cwd)};
+
+mock.module(fileKindModulePath, () => ({
+  async loadFileKindAndText() {
+    return { kind: "text", text: "alpha\\nbeta\\n" };
+  },
+  async classifyFileKind() {
+    throw new Error("read tool should not call classifyFileKind on text paths");
+  },
+}));
+
+try {
+  const { default: registerReadTool } = await import(\`${indexModulePath}?read-single-pass=\${Date.now()}\`);
+  const tools = new Map();
+  const pi = {
+    registerTool(tool) {
+      tools.set(tool.name, tool);
+    },
+    on() {},
+  };
+  registerReadTool(pi);
+  const readTool = tools.get("read");
+  if (!readTool) {
+    throw new Error("Tool not registered: read");
+  }
+  const result = await readTool.execute(
+    "r1",
+    { path: "sample.txt" },
+    undefined,
+    undefined,
+    { cwd },
+  );
+  console.log(result.content[0].text);
+} finally {
+  mock.restore();
+}
+`;
+
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile(process.execPath, ["--eval", script], { cwd: process.cwd() }, (error, stdout) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(stdout);
+        });
+      });
+
+      expect(output).toContain(":alpha");
+      expect(output).toContain(":beta");
     });
   });
 });
