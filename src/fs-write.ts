@@ -44,11 +44,6 @@ export async function writeFileAtomically(
     }
   }
 
-  if (existingStats && existingStats.nlink > 1) {
-    await writeFile(targetPath, content, "utf-8");
-    return;
-  }
-
   const dir = dirname(targetPath);
   const tempPath = join(dir, `.tmp-${randomUUID()}`);
   await mkdir(dir, { recursive: true });

@@ -48,7 +48,7 @@ describe("writeFileAtomically", () => {
     });
   });
 
-  it("updates all hard-linked siblings when writing through one path", async () => {
+  it("replaces only the addressed hard-link path via atomic rename", async () => {
     await withTempFile("primary.txt", "before\n", async ({ cwd, path: primaryPath }) => {
       const siblingPath = join(cwd, "sibling.txt");
       await link(primaryPath, siblingPath);
@@ -56,8 +56,8 @@ describe("writeFileAtomically", () => {
       await writeFileAtomically(primaryPath, "after\n");
 
       expect(await readFile(primaryPath, "utf-8")).toBe("after\n");
-      expect(await readFile(siblingPath, "utf-8")).toBe("after\n");
-      expect((await stat(primaryPath)).ino).toBe((await stat(siblingPath)).ino);
+      expect(await readFile(siblingPath, "utf-8")).toBe("before\n");
+      expect((await stat(primaryPath)).ino).not.toBe((await stat(siblingPath)).ino);
     });
   });
 });
