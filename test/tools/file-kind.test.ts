@@ -1,5 +1,6 @@
+import { execFile } from "child_process";
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
 import { classifyFileKind } from "../../src/file-kind";
@@ -101,6 +102,106 @@ describe("classifyFileKind", () => {
       });
     });
   });
+
+  it("classifies invalid utf-8 beyond the sniff window as binary", async () => {
+    const prefix = new Uint8Array(9000).fill(0x61);
+    const invalid = new Uint8Array([0xc3, 0x28]);
+    const suffix = new Uint8Array([0x0a]);
+    const bytes = new Uint8Array(prefix.length + invalid.length + suffix.length);
+    bytes.set(prefix, 0);
+    bytes.set(invalid, prefix.length);
+    bytes.set(suffix, prefix.length + invalid.length);
+
+    await withTempBytes("late-invalid.bin", bytes, async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({
+        kind: "binary",
+        description: "invalid UTF-8",
+      });
+    });
+  });
+
+  it("does not try to slurp unbounded special files", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    try {
+      await access("/dev/zero");
+    } catch {
+      return;
+    }
+
+    const script = [
+      'import { classifyFileKind } from "./src/file-kind";',
+      'console.log(JSON.stringify(await classifyFileKind("/dev/zero")));',
+    ].join("\n");
+
+    const result = await new Promise<string>((resolve, reject) => {
+      execFile(
+        process.execPath,
+        ["--eval", script],
+        { cwd: process.cwd(), timeout: 1000 },
+        (error, stdout) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(stdout);
+        },
+      );
+    });
+
+    expect(JSON.parse(result.trim())).toEqual({
+      kind: "binary",
+      description: "unsupported file type",
+    });
+  });
+
+  it("rejects named pipes without opening them", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const cwd = await createTempRoot();
+    const pipePath = join(cwd, "sample.pipe");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile("mkfifo", [pipePath], (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+
+      const script = [
+        'import { classifyFileKind } from "./src/file-kind";',
+        `console.log(JSON.stringify(await classifyFileKind(${JSON.stringify(pipePath)})));`,
+      ].join("\n");
+
+      const result = await new Promise<string>((resolve, reject) => {
+        execFile(
+          process.execPath,
+          ["--eval", script],
+          { cwd: process.cwd(), timeout: 1000 },
+          (error, stdout) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve(stdout);
+          },
+        );
+      });
+
+      expect(JSON.parse(result.trim())).toEqual({
+        kind: "binary",
+        description: "unsupported file type",
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("file kind guards in tools", () => {
@@ -168,6 +269,32 @@ describe("file kind guards in tools", () => {
         ).rejects.toThrow(/Path is a binary file: sample\.bin \(null bytes detected\)/i);
       },
     );
+  });
+
+  it("read rejects binary files even when invalid bytes appear after the sniff window", async () => {
+    const prefix = new Uint8Array(9000).fill(0x61);
+    const invalid = new Uint8Array([0xc3, 0x28]);
+    const suffix = new Uint8Array([0x0a]);
+    const bytes = new Uint8Array(prefix.length + invalid.length + suffix.length);
+    bytes.set(prefix, 0);
+    bytes.set(invalid, prefix.length);
+    bytes.set(suffix, prefix.length + invalid.length);
+
+    await withTempBytes("late-invalid.bin", bytes, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      await expect(
+        readTool.execute(
+          "r1",
+          { path: "late-invalid.bin" },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/Path is a binary file: late-invalid\.bin \(invalid UTF-8\)/i);
+    });
   });
 
   it("edit rejects binary files before reading them as text", async () => {

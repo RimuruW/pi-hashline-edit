@@ -19,16 +19,21 @@ function hasNullByte(buffer: Uint8Array): boolean {
   return buffer.includes(0);
 }
 
-function isValidUtf8(
-  buffer: Uint8Array,
-  options: { allowIncompleteTrailingSequence: boolean },
-): boolean {
+function decodeUtf8Chunk(decoder: TextDecoder, buffer: Uint8Array): boolean {
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    decoder.decode(
-      buffer,
-      options.allowIncompleteTrailingSequence ? { stream: true } : undefined,
-    );
+    decoder.decode(buffer, { stream: true });
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function finishUtf8(decoder: TextDecoder): boolean {
+  try {
+    decoder.decode();
     return true;
   } catch (error: unknown) {
     if (error instanceof TypeError) {
@@ -42,6 +47,12 @@ export async function classifyFileKind(filePath: string): Promise<FileKind> {
   const pathStat = await fsStat(filePath);
   if (pathStat.isDirectory()) {
     return { kind: "directory" };
+  }
+  if (!pathStat.isFile()) {
+    return {
+      kind: "binary",
+      description: "unsupported file type",
+    };
   }
 
   const fileHandle = await fsOpen(filePath, "r");
@@ -71,7 +82,43 @@ export async function classifyFileKind(filePath: string): Promise<FileKind> {
       };
     }
 
-    if (!isValidUtf8(sample, { allowIncompleteTrailingSequence: pathStat.size > bytesRead })) {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    if (!decodeUtf8Chunk(decoder, sample)) {
+      return {
+        kind: "binary",
+        description: "invalid UTF-8",
+      };
+    }
+
+    let position = bytesRead;
+    while (position < pathStat.size) {
+      const { bytesRead: chunkBytesRead } = await fileHandle.read(
+        buffer,
+        0,
+        FILE_TYPE_SNIFF_BYTES,
+        position,
+      );
+      if (chunkBytesRead === 0) {
+        break;
+      }
+
+      const chunk = buffer.subarray(0, chunkBytesRead);
+      if (hasNullByte(chunk)) {
+        return {
+          kind: "binary",
+          description: "null bytes detected",
+        };
+      }
+      if (!decodeUtf8Chunk(decoder, chunk)) {
+        return {
+          kind: "binary",
+          description: "invalid UTF-8",
+        };
+      }
+      position += chunkBytesRead;
+    }
+
+    if (!finishUtf8(decoder)) {
       return {
         kind: "binary",
         description: "invalid UTF-8",
