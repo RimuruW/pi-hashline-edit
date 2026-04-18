@@ -26,23 +26,21 @@ describe("resolveToCwd", () => {
     expect(resolveToCwd("~", cwd)).toBe(os.homedir());
   });
 
-  it("strips leading @ prefix", () => {
+  it("preserves a leading @ in relative paths", () => {
     expect(resolveToCwd("@src/main.ts", cwd)).toBe(
-      resolve(cwd, "src/main.ts"),
+      resolve(cwd, "@src/main.ts"),
     );
   });
 
-  it("replaces unicode non-breaking spaces with ASCII space", () => {
-    // \u00A0 is non-breaking space
+  it("preserves unicode spaces in file names", () => {
     expect(resolveToCwd("src/my\u00A0file.ts", cwd)).toBe(
-      resolve(cwd, "src/my file.ts"),
+      resolve(cwd, "src/my\u00A0file.ts"),
     );
   });
 
-  it("handles @ prefix combined with ~ expansion", () => {
-    // @~ → strip @ → ~ → expand to homedir
+  it("does not treat @~ as home-directory expansion", () => {
     expect(resolveToCwd("@~/notes.md", cwd)).toBe(
-      os.homedir() + "/notes.md",
+      resolve(cwd, "@~/notes.md"),
     );
   });
 });
