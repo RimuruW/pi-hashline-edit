@@ -24,6 +24,7 @@
 - Write tests with `bun:test` and place them under the matching `test/` subfolder.
 - Name files `<feature>.test.ts`; group assertions around one behavior per `describe` block.
 - Any change to anchor parsing, diff preview, compatibility mode, or atomic writes should include or update tests in the affected layer.
+- New integration scenarios (e.g. compound edits, stale-position edge cases) go under `test/integration/` as standalone `<scenario>.test.ts` files.
 
 ## Commit & Pull Request Guidelines
 - Follow the existing Conventional Commit pattern: `fix(hashline): ...`, `refactor(read, edit): ...`, `docs: ...`.
@@ -34,3 +35,4 @@
 - Keep `read`, `edit`, prompt text, and tests in sync whenever the hashline format changes.
 - Do not bypass `src/fs-write.ts`; atomic writes are part of the extension’s safety guarantees.
 - Preserve stale-anchor rejection semantics unless the change explicitly redesigns the protocol.
+- Do not introduce autocorrection heuristics (e.g. stripping duplicate boundary lines, converting `\t` escape sequences) into `applyHashlineEdits`. The policy is strict semantics: the model must produce correct diffs; the runtime must not silently patch them.

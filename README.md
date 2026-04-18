@@ -73,7 +73,7 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 - **Stale anchors fail.** A hash mismatch means the file has changed since the last `read`. The error includes a snippet with fresh `LINE#HASH` references for retry.
 - **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
 - **Hidden legacy compatibility.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the tool attempts an exact unique match. Usage is surfaced to the interactive UI so the operator can see that the model isn't using hashline mode.
-- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place.
+- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place. Hard-linked files are written atomically as well; this breaks the hard link, leaving the other names pointing to the original content.
 - **Display prefix stripping.** If the model accidentally pastes `LINE#HASH:` prefixes or diff `+`/`-` markers into replacement content, they are detected and stripped automatically.
 - **Per-file mutation queue.** Edits run inside Pi's `withFileMutationQueue()`, preventing lost updates when multiple tools mutate the same file concurrently in one turn.
 
@@ -95,7 +95,6 @@ bun test
 ```
 
 Set `PI_HASHLINE_DEBUG=1` to show an "active" notification at session start.
-
 
 ## Credits
 

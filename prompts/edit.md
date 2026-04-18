@@ -21,87 +21,75 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 </payload>
 
 <operations>
-Each entry has an `op` and a `lines` array of replacement content.
+Each entry has an `op` and a `lines` array.
 
-- `replace` — replace one line (`pos`) or an inclusive range (`pos` + `end`). `pos` is required.
-- `append` — insert lines after `pos`. Omit `pos` to append at EOF.
-- `prepend` — insert lines before `pos`. Omit `pos` to prepend at BOF.
+- `replace` — replaces the line at `pos`, or all lines from `pos` through `end` inclusive, with the contents of `lines`. `pos` is required; `end` is optional.
+- `append` — inserts `lines` after `pos`. Omit `pos` to insert at end of file.
+- `prepend` — inserts `lines` before `pos`. Omit `pos` to insert at start of file.
 
 `end` is only valid with `replace`.
 
-Anchor format: `"LINE#HASH"` copied from `read` output (e.g. `"12#MQ"`).
+Anchor format: `"LINE#HASH"` copied exactly from `read` output (e.g. `"12#MQ"`).
 </operations>
-
-<chained-edits>
-After a successful edit, the tool returns an "Updated anchors" block with fresh
-`LINE#HASH` references for the changed region. You may use these anchors directly
-in your next edit call on the same file without calling `read` again, provided
-your next edit targets the same region or nearby lines.
-
-If your next edit targets a distant part of the file, use `read` first to get
-fresh anchors for that region.
-</chained-edits>
 
 <examples>
 
 Replace one line:
 
 ```json
-{
-  "path": "src/main.ts",
-  "edits": [
-    { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
-  ]
-}
+{ "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
 ```
 
-Replace a range:
+Replace a range — `lines` is the complete new content for that range, not including the surrounding lines:
 
 ```json
-{
-  "path": "src/main.ts",
-  "edits": [
-    { "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": ["merged"] }
-  ]
-}
+{ "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": ["line a", "line b"] }
 ```
 
-Delete a range:
+Delete lines:
 
 ```json
-{
-  "path": "src/main.ts",
-  "edits": [
-    { "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": [] }
-  ]
-}
+{ "op": "replace", "pos": "12#MQ", "end": "14#VR", "lines": [] }
 ```
 
-Multiple edits in one call:
+Insert after a line:
+
+```json
+{ "op": "append", "pos": "50#NK", "lines": ["", "## New Section"] }
+```
+
+Multiple edits in one call — all anchors refer to the same pre-edit snapshot:
 
 ```json
 {
   "path": "README.md",
   "edits": [
     { "op": "replace", "pos": "33#YW", "lines": ["updated line"] },
-    { "op": "append", "pos": "50#NK", "lines": ["", "## New Section"] },
-    { "op": "prepend", "lines": ["// header"] }
+    { "op": "append",  "pos": "50#NK", "lines": ["", "## New Section"] },
+    { "op": "prepend",               "lines": ["// header"] }
   ]
 }
 ```
 </examples>
 
 <constraints>
-- `"edits"` must be a real JSON array in the tool call arguments — never a JSON-encoded string. The framework expects `edits: [...]`, not `edits: "[...]"`.
+- Copy `LINE#HASH` anchors exactly from `read` output — do not guess or construct them.
 - Copy indentation exactly from `read` output.
-- `lines` must be literal file content. Do not include `LINE#HASH:` prefixes.
-- Extra keys inside edit entries are rejected.
-- Submitting content identical to the current file is rejected.
-- Each edit targets anchors from the same pre-edit snapshot. Do not emit overlapping or nested edits — merge nearby changes into one entry.
+- `lines` must be literal file content. Do not include `LINE#HASH:` prefixes or diff markers.
+- Do not echo the line immediately before or after the replaced range into `lines` — include only the new content for the targeted lines.
+- Each edit in a call targets anchors from the same pre-edit snapshot. Do not use anchors from the result of one edit as input to another edit in the same call.
+- Do not emit overlapping or adjacent edits — merge nearby changes into a single entry.
 - Keep each edit as small as possible; do not pad with large unchanged regions.
+- Submitting content identical to the current file is rejected.
 </constraints>
 
+<after-edit>
+A successful edit returns:
+- `Diff preview` — changed lines with `+`/`-` markers.
+- `Updated anchors` — fresh `LINE#HASH` references for the changed region, usable in the next call without re-reading. For edits outside that region, use `read` first.
+</after-edit>
+
 <errors>
-- **Stale anchor** (`>>>`): the file has changed. Use the `>>> LINE#HASH:content` lines from the error snippet to retry.
-- **No-op** (`identical`): your replacement matches existing content. Re-read and supply different content.
+- **Stale anchor**: the file has changed since your last `read`. The error shows the current content with `>>>` marking the lines you need. Copy those `>>> LINE#HASH` values and retry. For a range replace, update both `pos` and `end`.
+- **Identical content**: your replacement matches what the file already contains. Re-read to confirm the current state, then supply different content.
 </errors>
