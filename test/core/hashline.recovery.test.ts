@@ -130,12 +130,30 @@ describe("applyHashlineEdits — error handling", () => {
       ]),
     ).toThrow(/conflicting edits.*inserts inside a replaced original range/i);
   });
+
+  it("rejects EOF append and append-after-last-line on newline-terminated files", () => {
+    const content = "a\nb\n";
+    expect(() =>
+      applyHashlineEdits(content, [
+        { op: "append", lines: ["X"] },
+        { op: "append", pos: makeTag(2, "b"), lines: ["Y"] },
+      ]),
+    ).toThrow(/conflicting edits.*same insertion boundary/i);
+  });
+
+  it("rejects EOF append and sentinel-anchored EOF append on newline-terminated files", () => {
+    const content = "a\nb\n";
+    expect(() =>
+      applyHashlineEdits(content, [
+        { op: "append", lines: ["X"] },
+        { op: "append", pos: makeTag(3, ""), lines: ["Y"] },
+      ]),
+    ).toThrow(/conflicting edits.*same insertion boundary/i);
+  });
 });
 
-// Only explicit input cleanup plus this boundary-duplicate correction remain as
-// default assist heuristics; hidden intent-recovery behavior is intentionally excluded.
 describe("applyHashlineEdits — heuristics", () => {
-  it("auto-corrects trailing duplicate on range replace", () => {
+  it("preserves trailing boundary-looking lines in replacements", () => {
     const content = "if (ok) {\n  run();\n}\nafter();";
     const edits: HashlineEdit[] = [
       {
@@ -146,50 +164,11 @@ describe("applyHashlineEdits — heuristics", () => {
       },
     ];
     const result = applyHashlineEdits(content, edits);
-    expect(result.content).toBe("if (ok) {\n  runSafe();\n}\nafter();");
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings![0]).toContain("Auto-corrected range replace");
-  });
-
-  it("does NOT auto-correct when end already includes boundary", () => {
-    const content =
-      "function outer() {\n  function inner() {\n    run();\n  }\n}";
-    const edits: HashlineEdit[] = [
-      {
-        op: "replace",
-        pos: makeTag(1, "function outer() {"),
-        end: makeTag(4, "  }"),
-        lines: [
-          "function outer() {",
-          "  function inner() {",
-          "    runSafe();",
-          "  }",
-        ],
-      },
-    ];
-    const result = applyHashlineEdits(content, edits);
-    expect(result.content).toBe(
-      "function outer() {\n  function inner() {\n    runSafe();\n  }\n}",
-    );
+    expect(result.content).toBe("if (ok) {\n  runSafe();\n}\n}\nafter();");
     expect(result.warnings).toBeUndefined();
   });
 
-  it("does NOT auto-correct when trailing line trims to empty", () => {
-    const content = "alpha\nbeta\n\ngamma";
-    const edits: HashlineEdit[] = [
-      {
-        op: "replace",
-        pos: makeTag(1, "alpha"),
-        end: makeTag(2, "beta"),
-        lines: ["ALPHA", ""],
-      },
-    ];
-    const result = applyHashlineEdits(content, edits);
-    expect(result.content).toBe("ALPHA\n\n\ngamma");
-    expect(result.warnings).toBeUndefined();
-  });
-
-  it("auto-corrects leading duplicate on range replace", () => {
+  it("preserves leading boundary-looking lines in replacements", () => {
     const content = "before();\nif (ok) {\n  run();\n}\nafter();";
     const edits: HashlineEdit[] = [
       {
@@ -201,43 +180,12 @@ describe("applyHashlineEdits — heuristics", () => {
     ];
     const result = applyHashlineEdits(content, edits);
     expect(result.content).toBe(
-      "before();\nif (ok) {\n  runSafe();\n}\nafter();",
+      "before();\nbefore();\nif (ok) {\n  runSafe();\n}\nafter();",
     );
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings![0]).toContain("removed leading replacement line");
-  });
-
-  it("does NOT auto-correct leading duplicate for short non-brace lines", () => {
-    const content = "x\nalpha\nbeta";
-    const edits: HashlineEdit[] = [
-      {
-        op: "replace",
-        pos: makeTag(2, "alpha"),
-        end: makeTag(3, "beta"),
-        lines: ["x", "ALPHA", "BETA"],
-      },
-    ];
-    const result = applyHashlineEdits(content, edits);
-    expect(result.content).toBe("x\nx\nALPHA\nBETA");
     expect(result.warnings).toBeUndefined();
   });
 
-  it("auto-corrects leading duplicate for brace closers", () => {
-    const content = "}\nfunction foo() {\n  bar();\n}";
-    const edits: HashlineEdit[] = [
-      {
-        op: "replace",
-        pos: makeTag(2, "function foo() {"),
-        end: makeTag(3, "  bar();"),
-        lines: ["}", "function foo() {", "  baz();"],
-      },
-    ];
-    const result = applyHashlineEdits(content, edits);
-    expect(result.content).toBe("}\nfunction foo() {\n  baz();\n}");
-    expect(result.warnings).toHaveLength(1);
-  });
-
-  it("auto-corrects escaped tab indentation only when anchored replace context already uses tabs", () => {
+  it("does not auto-correct escaped tab indentation even when the env flag is set", () => {
     const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
     process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
 
@@ -252,66 +200,13 @@ describe("applyHashlineEdits — heuristics", () => {
       ];
       const result = applyHashlineEdits(content, edits);
 
-      expect(result.content).toBe("root\n\tchild\n\t\treplaced\nend");
-      expect(result.warnings?.[0]).toContain(
-        "Auto-corrected escaped tab indentation",
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
-      } else {
-        process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = previous;
-      }
-    }
-  });
-
-  it("does not mutate caller-owned edit lines while auto-correcting escaped tabs", () => {
-    const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
-    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
-
-    try {
-      const content = "root\n\tchild\n\t\tvalue\nend";
-      const edits: HashlineEdit[] = [
-        {
-          op: "replace",
-          pos: makeTag(3, "\t\tvalue"),
-          lines: ["\\t\\treplaced"],
-        },
-      ];
-
-      applyHashlineEdits(content, edits);
-
+      expect(result.content).toBe("root\n\tchild\n\\t\\treplaced\nend");
+      expect(result.warnings).toBeUndefined();
       expect(edits[0]).toEqual({
         op: "replace",
         pos: makeTag(3, "\t\tvalue"),
         lines: ["\\t\\treplaced"],
       });
-    } finally {
-      if (previous === undefined) {
-        delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
-      } else {
-        process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = previous;
-      }
-    }
-  });
-
-  it("does not auto-correct leading escaped tab sequences that already match literal file content", () => {
-    const previous = process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;
-    process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS = "1";
-
-    try {
-      const content = "root\n\\tchild\n\\t\\tvalue\nend";
-      const edits: HashlineEdit[] = [
-        {
-          op: "replace",
-          pos: makeTag(3, "\\t\\tvalue"),
-          lines: ["\\t\\treplaced"],
-        },
-      ];
-      const result = applyHashlineEdits(content, edits);
-
-      expect(result.content).toBe("root\n\\tchild\n\\t\\treplaced\nend");
-      expect(result.warnings).toBeUndefined();
     } finally {
       if (previous === undefined) {
         delete process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS;

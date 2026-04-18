@@ -371,90 +371,6 @@ export type HashlineToolEdit = {
   lines: string[] | string | null;
 };
 
-const MIN_AUTOCORRECT_LENGTH = 2;
-const LEADING_ESCAPED_TABS_RE = /^((?:\\t)+)/;
-
-function shouldAutocorrect(line: string, otherLine: string): boolean {
-  if (!line || line !== otherLine) return false;
-  line = line.trim();
-  if (line.length < MIN_AUTOCORRECT_LENGTH) {
-    // Short lines: only allow brace/paren closers
-    return line.endsWith("}") || line.endsWith(")");
-  }
-  return true;
-}
-
-function countLeadingTabs(line: string): number {
-  let count = 0;
-  while (line[count] === "\t") {
-    count++;
-  }
-  return count;
-}
-
-function maybeAutocorrectEscapedTabIndentation(
-  edits: HashlineEdit[],
-  warnings: string[],
-  fileLines: string[],
-): void {
-  if (process.env.PI_HASHLINE_AUTOCORRECT_ESCAPED_TABS !== "1") {
-    return;
-  }
-
-  for (const edit of edits) {
-    if (edit.op !== "replace" || edit.lines.length === 0) {
-      continue;
-    }
-
-    const hasEscapedTabs = edit.lines.some((line) => line.includes("\\t"));
-    if (!hasEscapedTabs) {
-      continue;
-    }
-
-    const hasRealTabs = edit.lines.some((line) => line.includes("\t"));
-    if (hasRealTabs) {
-      continue;
-    }
-
-    const targetStart = edit.pos.line - 1;
-    const targetCount = edit.end ? edit.end.line - edit.pos.line + 1 : 1;
-    if (targetCount !== edit.lines.length) {
-      continue;
-    }
-
-    let correctedCount = 0;
-    edit.lines = edit.lines.map((line, index) => {
-      const match = line.match(LEADING_ESCAPED_TABS_RE);
-      if (!match) {
-        return line;
-      }
-
-      const escapedTabs = match[1]!;
-      const tabCount = escapedTabs.length / 2;
-      const targetLine = fileLines[targetStart + index];
-      if (!targetLine) {
-        return line;
-      }
-
-      // Only recover escaped indentation when the anchored line being replaced
-      // already uses the same leading tab depth. If file content itself begins
-      // with literal "\t", preserve it verbatim.
-      if (countLeadingTabs(targetLine) !== tabCount || targetLine.startsWith(escapedTabs)) {
-        return line;
-      }
-
-      correctedCount += tabCount;
-      return "\t".repeat(tabCount) + line.slice(escapedTabs.length);
-    });
-
-    if (correctedCount > 0) {
-      warnings.push(
-        "Auto-corrected escaped tab indentation in anchored replace edit: converted leading \\t sequence(s) where the replaced file content already used matching real tab indentation",
-      );
-    }
-  }
-}
-
 function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   edits: HashlineEdit[],
   warnings: string[],
@@ -504,6 +420,7 @@ function normalizeEditTarget(
   edit: HashlineEdit,
   index: number,
   fileLineCount: number,
+  hasTerminalNewline: boolean,
 ): NormalizedEditTarget {
   switch (edit.op) {
     case "replace":
@@ -514,13 +431,21 @@ function normalizeEditTarget(
         startLine: edit.pos.line,
         endLine: edit.end?.line ?? edit.pos.line,
       };
-    case "append":
+    case "append": {
+      const eofBoundary = hasTerminalNewline && fileLineCount > 0
+        ? fileLineCount - 1
+        : fileLineCount;
       return {
         kind: "insert",
         index,
         label: describeEdit(edit),
-        boundary: edit.pos ? edit.pos.line : fileLineCount,
+        boundary: edit.pos
+          ? hasTerminalNewline && edit.pos.line === fileLineCount
+            ? eofBoundary
+            : edit.pos.line
+          : eofBoundary,
       };
+    }
     case "prepend":
       return {
         kind: "insert",
@@ -568,8 +493,11 @@ function cloneHashlineEdit(edit: HashlineEdit): HashlineEdit {
 function assertNoConflictingEdits(
   edits: HashlineEdit[],
   fileLineCount: number,
+  hasTerminalNewline: boolean,
 ): void {
-  const targets = edits.map((edit, index) => normalizeEditTarget(edit, index, fileLineCount));
+  const targets = edits.map((edit, index) =>
+    normalizeEditTarget(edit, index, fileLineCount, hasTerminalNewline)
+  );
 
   for (let i = 0; i < targets.length; i++) {
     const left = targets[i]!;
@@ -767,8 +695,7 @@ export function applyHashlineEdits(
     dedupedEdits.push(edit);
   }
 
-  assertNoConflictingEdits(dedupedEdits, fileLines.length);
-  maybeAutocorrectEscapedTabIndentation(dedupedEdits, warnings, fileLines);
+  assertNoConflictingEdits(dedupedEdits, fileLines.length, hasTerminalNewline);
   maybeWarnSuspiciousUnicodeEscapePlaceholder(dedupedEdits, warnings);
 
   // Compute sort key (descending) — bottom-up application
@@ -879,52 +806,7 @@ export function applyHashlineEdits(
           }
 
           const newLines = [...edit.lines];
-          // Auto-correct trailing duplicate: if the last replacement line duplicates
-          // the next surviving line after the range, the model likely echoed the
-          // boundary. Strip the duplicate to avoid doubled lines.
-          const trailingReplacementLine =
-            newLines[newLines.length - 1]?.trimEnd();
-          const nextSurvivingLine = fileLines[edit.end.line]?.trimEnd();
-          if (
-            shouldAutocorrect(trailingReplacementLine, nextSurvivingLine) &&
-            // Safety: only correct when end-line content differs from the duplicate.
-            // If end already points to the boundary, matching next line is coincidence.
-            fileLines[edit.end.line - 1]?.trimEnd() !== trailingReplacementLine
-          ) {
-            newLines.pop();
-            warnings.push(
-              `Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed trailing replacement line "${trailingReplacementLine}" that duplicated next surviving line`,
-            );
-          }
-          // Auto-correct leading duplicate: if the first replacement line duplicates
-          // the line before the range start, the model likely echoed the preceding
-          // context. Strip the duplicate.
-          const leadingReplacementLine = newLines[0]?.trimEnd();
-          const prevSurvivingLine = fileLines[edit.pos.line - 2]?.trimEnd();
-          if (
-            shouldAutocorrect(leadingReplacementLine, prevSurvivingLine) &&
-            // Safety: only correct when pos-line content differs from the duplicate.
-            // If pos already points to the boundary, matching prev line is coincidence.
-            fileLines[edit.pos.line - 1]?.trimEnd() !== leadingReplacementLine
-          ) {
-            newLines.shift();
-            warnings.push(
-              `Auto-corrected range replace ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}: removed leading replacement line "${leadingReplacementLine}" that duplicated preceding surviving line`,
-            );
-          }
           fileLines.splice(edit.pos.line - 1, count, ...newLines);
-          // P2: Update the delta for this replace to reflect autocorrected line count,
-          // so subsequent computeOffset calls for edits above use the correct offset.
-          const origDelta = edit.lines.length - count;
-          const actualDelta = newLines.length - count;
-          if (actualDelta !== origDelta) {
-            for (const d of deltas) {
-              if (d[0] === edit.pos.line - 1 && d[1] === origDelta) {
-                d[1] = actualDelta;
-                break;
-              }
-            }
-          }
           trackEdit(
             edit.pos.line + computeOffset(edit.pos.line - 1),
             newLines.length,
