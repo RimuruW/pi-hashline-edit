@@ -30,6 +30,7 @@ import {
 import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
+import { getCachedSnapshot, getFileSnapshot } from "./snapshot";
 
 const hashlineEditLinesSchema = Type.Union([
   Type.Array(Type.String(), { description: "content (preferred format)" }),
@@ -54,6 +55,7 @@ const hashlineEditItemSchema = Type.Object(
 export const hashlineEditToolSchema = Type.Object(
   {
     path: Type.String({ description: "path" }),
+    snapshotId: Type.Optional(Type.String({ description: "snapshot fingerprint from read" })),
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     ),
@@ -63,6 +65,7 @@ export const hashlineEditToolSchema = Type.Object(
 
 type EditRequestParams = {
   path: string;
+  snapshotId?: string;
   edits?: HashlineToolEdit[];
   oldText?: string;
   newText?: string;
@@ -81,6 +84,7 @@ type HashlineEditToolDetails = {
   diff: string;
   firstChangedLine?: number;
   compatibility?: CompatibilityDetails;
+  snapshotId?: string;
 };
 
 const EDIT_DESC = readFileSync(
@@ -93,7 +97,15 @@ const EDIT_PROMPT_SNIPPET = readFileSync(
   "utf-8",
 ).trim();
 
-const ROOT_KEYS = new Set(["path", "edits", "oldText", "newText", "old_text", "new_text"]);
+const ROOT_KEYS = new Set([
+  "path",
+  "snapshotId",
+  "edits",
+  "oldText",
+  "newText",
+  "old_text",
+  "new_text",
+]);
 const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
 const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
 
@@ -107,6 +119,25 @@ function hasOwn(request: Record<string, unknown>, key: string): boolean {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+async function assertSnapshotIdMatches(
+  absolutePath: string,
+  rawPath: string,
+  expectedSnapshotId: string | undefined,
+): Promise<string> {
+  const cached = getCachedSnapshot(absolutePath);
+  const snapshot = cached && cached.snapshotId === expectedSnapshotId
+    ? cached
+    : await getFileSnapshot(absolutePath);
+
+  if (expectedSnapshotId !== undefined && snapshot.snapshotId !== expectedSnapshotId) {
+    throw new Error(
+      `Stale snapshotId for ${rawPath}. Re-run read and retry with the latest snapshotId. Current snapshotId: ${snapshot.snapshotId}`,
+    );
+  }
+
+  return snapshot.snapshotId;
 }
 
 function withHiddenStringProperty(
@@ -195,6 +226,10 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
 
   if (hasOwn(request, "edits") && !Array.isArray(request.edits)) {
     throw new Error('Edit request requires an "edits" array when provided.');
+  }
+
+  if (hasOwn(request, "snapshotId") && typeof request.snapshotId !== "string") {
+    throw new Error('Edit request field "snapshotId" must be a string when provided.');
   }
 
   for (const legacyKey of LEGACY_KEYS) {
@@ -324,6 +359,9 @@ function getRenderablePreviewInput(args: unknown): EditRequestParams | null {
   }
 
   const request: EditRequestParams = { path: args.path };
+  if (typeof args.snapshotId === "string") {
+    request.snapshotId = args.snapshotId;
+  }
   if (Array.isArray(args.edits)) {
     request.edits = args.edits as HashlineToolEdit[];
   }
@@ -510,6 +548,8 @@ export async function computeEditPreview(
       };
     }
 
+    await assertSnapshotIdMatches(absolutePath, path, params.snapshotId);
+
     const originalNormalized = normalizeToLF(stripBom(file.text).text);
 
     let result: string;
@@ -605,8 +645,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      // `params` may already be the object returned by `prepareArguments`, which
-      // preserves legacy top-level replace fields as hidden properties for execute.
       assertEditRequest(params);
 
       const normalizedParams = params as EditRequestParams;
@@ -657,6 +695,12 @@ export function registerEditTool(pi: ExtensionAPI): void {
             `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
           );
         }
+
+        const snapshotId = await assertSnapshotIdMatches(
+          absolutePath,
+          path,
+          normalizedParams.snapshotId,
+        );
 
         throwIfAborted(signal);
         const { bom, text: content } = stripBom(file.text);
@@ -729,10 +773,12 @@ export function registerEditTool(pi: ExtensionAPI): void {
           absolutePath,
           bom + restoreLineEndings(result, originalEnding),
         );
+        const updatedSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
 
         const diffResult = generateDiffString(originalNormalized, result);
         const preview = buildCompactHashlineDiffPreview(diffResult.diff);
         const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
+        const snapshotLine = `SnapshotId: ${updatedSnapshotId}`;
         const previewBlock = preview.preview
           ? `\n\nDiff preview:\n${preview.preview}`
           : "";
@@ -740,8 +786,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
           ? `\n\nWarnings:\n${warnings.join("\n")}`
           : "";
 
-        // Compute updated anchors for chaining edits without re-reading.
-        // Reuse read tool semantics: empty string → 0 lines, trailing newline sentinel stripped.
         const resultLines = result.length === 0
           ? []
           : result.endsWith("\n")
@@ -764,12 +808,13 @@ export function registerEditTool(pi: ExtensionAPI): void {
           content: [
             {
               type: "text",
-              text: `Updated ${path}\n${summaryLine}${previewBlock}${warningsBlock}${anchorsBlock}`,
+              text: `Updated ${path}\n${summaryLine}\n${snapshotLine}${previewBlock}${warningsBlock}${anchorsBlock}`,
             },
           ],
           details: {
             diff: diffResult.diff,
             firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
+            snapshotId: updatedSnapshotId,
             ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
           },
         };

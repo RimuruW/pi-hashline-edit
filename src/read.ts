@@ -16,6 +16,7 @@ import { loadFileKindAndText } from "./file-kind";
 import { computeLineHash, formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
+import { getFileSnapshot } from "./snapshot";
 
 const READ_DESC = readFileSync(
   new URL("../prompts/read.md", import.meta.url),
@@ -193,10 +194,11 @@ export function registerReadTool(pi: ExtensionAPI): void {
         offset: params.offset,
         limit: params.limit,
       });
+      const snapshot = await getFileSnapshot(absolutePath);
 
       return {
-        content: [{ type: "text", text: preview.text }],
-        details: { truncation: preview.truncation },
+        content: [{ type: "text", text: `${preview.text}\n\n[snapshotId: ${snapshot.snapshotId}]` }],
+        details: { truncation: preview.truncation, snapshotId: snapshot.snapshotId },
       };
     },
   });

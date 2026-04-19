@@ -10,6 +10,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 ```json
 {
   "path": "src/main.ts",
+  "snapshotId": "v1|/abs/path|...",
   "edits": [
     { "op": "replace", "pos": "12#MQ", "lines": ["..."] }
   ]
@@ -17,6 +18,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 ```
 
 - `path` — target file path.
+- `snapshotId` — optional fingerprint returned by `read`; when provided, `edit` rejects stale file state before applying changes.
 - `edits` — array of edit operations.
 </payload>
 
@@ -87,6 +89,7 @@ Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and
 - `replace_text` is exact-only: it must match exactly once in the current file. If it matches zero or multiple times, re-read and use anchors instead.
 - Do not echo the line immediately before or after the replaced range into `lines` — include only the new content for the targeted lines.
 - Each edit in a call targets anchors from the same pre-edit snapshot. Do not use anchors from the result of one edit as input to another edit in the same call.
+- Pass `snapshotId` from the latest `read` when available. If it is stale, re-read before retrying.
 - Do not emit overlapping or adjacent edits — merge nearby changes into a single entry.
 - Keep each edit as small as possible; do not pad with large unchanged regions.
 - Submitting content identical to the current file is rejected.
@@ -95,10 +98,13 @@ Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and
 <after-edit>
 A successful edit returns:
 - `Diff preview` — changed lines with `+`/`-` markers.
+- `SnapshotId` — the fresh post-edit fingerprint for subsequent edits on the same file.
 - `Updated anchors` — fresh `LINE#HASH` references for the changed region, usable in the next call without re-reading. For edits outside that region, use `read` first.
 </after-edit>
 
 <errors>
 - **Stale anchor**: the file has changed since your last `read`. The error shows the current content with `>>>` marking the lines you need. Copy those `>>> LINE#HASH` values and retry. For a range replace, update both `pos` and `end`.
+- **Stale snapshotId**: the file changed since your last `read`. Re-run `read` and retry with the latest `snapshotId`.
 - **Identical content**: your replacement matches what the file already contains. Re-read to confirm the current state, then supply different content.
+</errors>
 </errors>
