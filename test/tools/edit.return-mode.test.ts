@@ -109,4 +109,65 @@ describe("edit tool returnMode", () => {
       expect(result.details?.returnedRanges?.[0]?.text).not.toContain(`3#${computeLineHash(3, "ccc")}:ccc`);
     });
   });
+
+  it("clamps returnedRanges metadata to the actual last returned line", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          returnMode: "ranges",
+          returnRanges: [{ start: 2, end: 5 }],
+          edits: [
+            {
+              op: "replace",
+              pos: `2#${computeLineHash(2, "bbb")}`,
+              lines: ["BBB"],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(result.details?.returnedRanges?.[0]?.start).toBe(2);
+      expect(result.details?.returnedRanges?.[0]?.end).toBe(3);
+    });
+  });
+
+  it("marks returnedRanges as empty when the requested start is beyond EOF", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          returnMode: "ranges",
+          returnRanges: [{ start: 10, end: 12 }],
+          edits: [
+            {
+              op: "replace",
+              pos: `2#${computeLineHash(2, "bbb")}`,
+              lines: ["BBB"],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(result.details?.returnedRanges?.[0]?.start).toBe(10);
+      expect(result.details?.returnedRanges?.[0]?.end).toBe(12);
+      expect(result.details?.returnedRanges?.[0]?.empty).toBeTrue();
+    });
+  });
 });

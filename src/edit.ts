@@ -33,7 +33,7 @@ import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
 import { formatHashlineReadPreview } from "./read";
 import { throwIfAborted } from "./runtime";
-import { getCachedSnapshot, getFileSnapshot } from "./snapshot";
+import { getFileSnapshot } from "./snapshot";
 
 const hashlineEditLinesSchema = Type.Union([
   Type.Array(Type.String(), { description: "content (preferred format)" }),
@@ -90,6 +90,7 @@ type ReturnedRangePreview = {
   end: number;
   text: string;
   nextOffset?: number;
+  empty?: true;
 };
 
 type FullContentPreview = {
@@ -198,13 +199,11 @@ function formatSnapshotRefreshAnchors(text: string, anchorLines: number[]): stri
     return "File is empty. Use read to confirm the current state before retrying.";
   }
 
-  const focusLines = [...new Set(anchorLines)]
-    .filter((line) => line >= 1 && line <= visibleLines.length)
-    .sort((left, right) => left - right);
-
-  if (focusLines.length === 0) {
-    return formatHashlineReadPreview(text, { offset: 1, limit: 12 }).text;
-  }
+  const focusLines = [...new Set(
+    anchorLines.length > 0
+      ? anchorLines.map((line) => Math.min(Math.max(line, 1), visibleLines.length))
+      : [1],
+  )].sort((left, right) => left - right);
 
   const displayLines = new Set<number>();
   for (const line of focusLines) {
@@ -235,9 +234,7 @@ async function assertSnapshotIdMatches(
   expectedSnapshotId: string | undefined,
   options?: { currentText?: string; anchorLines?: number[] },
 ): Promise<string> {
-  const snapshot = expectedSnapshotId === undefined
-    ? getCachedSnapshot(absolutePath) ?? await getFileSnapshot(absolutePath)
-    : await getFileSnapshot(absolutePath);
+  const snapshot = await getFileSnapshot(absolutePath);
 
   if (expectedSnapshotId !== undefined && snapshot.snapshotId !== expectedSnapshotId) {
     const refreshBlock = options?.currentText !== undefined
@@ -625,17 +622,25 @@ function formatRequestedRangePreviews(
   text: string,
   ranges: ReturnRange[],
 ): { text: string; returnedRanges: ReturnedRangePreview[] } {
+  const totalLines = getVisibleLines(text).length;
   const returnedRanges = ranges.map((range) => {
-    const end = range.end ?? range.start;
+    const requestedEnd = range.end ?? range.start;
     const preview = formatHashlineReadPreview(text, {
       offset: range.start,
-      limit: end - range.start + 1,
+      limit: requestedEnd - range.start + 1,
     });
+    const hasReturnedLines = /^\d+#/m.test(preview.text);
+    const actualEnd = hasReturnedLines
+      ? preview.nextOffset !== undefined
+        ? preview.nextOffset - 1
+        : Math.min(requestedEnd, totalLines)
+      : requestedEnd;
     return {
       start: range.start,
-      end,
+      end: hasReturnedLines ? Math.max(range.start, actualEnd) : actualEnd,
       text: preview.text,
       ...(preview.nextOffset !== undefined ? { nextOffset: preview.nextOffset } : {}),
+      ...(!hasReturnedLines ? { empty: true as const } : {}),
     };
   });
 
