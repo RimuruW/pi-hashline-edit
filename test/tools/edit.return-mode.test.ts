@@ -69,4 +69,42 @@ describe("edit tool returnMode", () => {
       expect(result.details?.nextOffset).toBeGreaterThan(1);
     });
   });
+
+  it("returns only the requested post-edit ranges when returnMode is ranges", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\nddd\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          returnMode: "ranges",
+          returnRanges: [
+            { start: 1, end: 2 },
+            { start: 4 },
+          ],
+          edits: [
+            {
+              op: "replace",
+              pos: `2#${computeLineHash(2, "bbb")}`,
+              lines: ["BBB"],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(getText(result)).toContain("Requested ranges:");
+      expect(getText(result)).toContain("--- Range 1 (lines 1-2) ---");
+      expect(getText(result)).toContain(`1#${computeLineHash(1, "aaa")}:aaa`);
+      expect(getText(result)).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
+      expect(getText(result)).toContain("--- Range 2 (lines 4-4) ---");
+      expect(getText(result)).toContain(`4#${computeLineHash(4, "ddd")}:ddd`);
+      expect(getText(result)).not.toContain(`3#${computeLineHash(3, "ccc")}:ccc`);
+    });
+  });
 });

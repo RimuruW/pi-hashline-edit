@@ -39,6 +39,14 @@ const hashlineEditLinesSchema = Type.Union([
   Type.Null(),
 ]);
 
+const returnRangeSchema = Type.Object(
+  {
+    start: Type.Integer({ minimum: 1, description: "first post-edit line to return" }),
+    end: Type.Optional(Type.Integer({ minimum: 1, description: "last post-edit line to return" })),
+  },
+  { additionalProperties: false },
+);
+
 const hashlineEditItemSchema = Type.Object(
   {
     op: StringEnum(["replace", "append", "prepend", "replace_text"] as const, {
@@ -58,7 +66,10 @@ export const hashlineEditToolSchema = Type.Object(
     path: Type.String({ description: "path" }),
     snapshotId: Type.Optional(Type.String({ description: "snapshot fingerprint from read" })),
     returnMode: Type.Optional(
-      StringEnum(["changed", "full"] as const, { description: 'response mode: "changed" or "full"' }),
+      StringEnum(["changed", "full", "ranges"] as const, { description: 'response mode: "changed", "full", or "ranges"' }),
+    ),
+    returnRanges: Type.Optional(
+      Type.Array(returnRangeSchema, { description: "post-edit line ranges when returnMode is ranges" }),
     ),
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
@@ -67,10 +78,23 @@ export const hashlineEditToolSchema = Type.Object(
   { additionalProperties: false },
 );
 
+type ReturnRange = {
+  start: number;
+  end?: number;
+};
+
+type ReturnedRangePreview = {
+  start: number;
+  end: number;
+  text: string;
+  nextOffset?: number;
+};
+
 type EditRequestParams = {
   path: string;
   snapshotId?: string;
-  returnMode?: "changed" | "full";
+  returnMode?: "changed" | "full" | "ranges";
+  returnRanges?: ReturnRange[];
   edits?: HashlineToolEdit[];
   oldText?: string;
   newText?: string;
@@ -92,6 +116,7 @@ type HashlineEditToolDetails = {
   snapshotId?: string;
   classification?: "noop";
   nextOffset?: number;
+  returnedRanges?: ReturnedRangePreview[];
 };
 
 const EDIT_DESC = readFileSync(
@@ -108,6 +133,7 @@ const ROOT_KEYS = new Set([
   "path",
   "snapshotId",
   "returnMode",
+  "returnRanges",
   "edits",
   "oldText",
   "newText",
@@ -237,9 +263,43 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
   }
 
   if (hasOwn(request, "returnMode")) {
-    if (request.returnMode !== "changed" && request.returnMode !== "full") {
-      throw new Error('Edit request field "returnMode" must be "changed" or "full" when provided.');
+    if (
+      request.returnMode !== "changed" &&
+      request.returnMode !== "full" &&
+      request.returnMode !== "ranges"
+    ) {
+      throw new Error('Edit request field "returnMode" must be "changed", "full", or "ranges" when provided.');
     }
+  }
+
+  if (hasOwn(request, "returnRanges")) {
+    if (!Array.isArray(request.returnRanges) || request.returnRanges.length === 0) {
+      throw new Error('Edit request field "returnRanges" must be a non-empty array when provided.');
+    }
+    for (const [index, range] of request.returnRanges.entries()) {
+      if (!isRecord(range)) {
+        throw new Error(`returnRanges[${index}] must be an object.`);
+      }
+      if (!Number.isInteger(range.start) || range.start < 1) {
+        throw new Error(`returnRanges[${index}].start must be a positive integer.`);
+      }
+      if (hasOwn(range, "end")) {
+        if (!Number.isInteger(range.end) || (range.end as number) < 1) {
+          throw new Error(`returnRanges[${index}].end must be a positive integer when provided.`);
+        }
+        if ((range.end as number) < (range.start as number)) {
+          throw new Error(`returnRanges[${index}].end must be >= start.`);
+        }
+      }
+    }
+  }
+
+  if (request.returnMode === "ranges") {
+    if (!Array.isArray(request.returnRanges) || request.returnRanges.length === 0) {
+      throw new Error('Edit request with returnMode "ranges" requires a non-empty "returnRanges" array.');
+    }
+  } else if (hasOwn(request, "returnRanges")) {
+    throw new Error('Edit request field "returnRanges" is only supported when returnMode is "ranges".');
   }
 
   if (hasOwn(request, "snapshotId") && typeof request.snapshotId !== "string") {
@@ -481,6 +541,37 @@ function formatRenderedEditResult(
   return `\n${shown.join("\n")}`;
 }
 
+function formatRequestedRangePreviews(
+  text: string,
+  ranges: ReturnRange[],
+): { text: string; returnedRanges: ReturnedRangePreview[] } {
+  const returnedRanges = ranges.map((range) => {
+    const end = range.end ?? range.start;
+    const preview = formatHashlineReadPreview(text, {
+      offset: range.start,
+      limit: end - range.start + 1,
+    });
+    return {
+      start: range.start,
+      end,
+      text: preview.text,
+      ...(preview.nextOffset !== undefined ? { nextOffset: preview.nextOffset } : {}),
+    };
+  });
+
+  const formatted = returnedRanges
+    .map(
+      (range, index) =>
+        `--- Range ${index + 1} (lines ${range.start}-${range.end}) ---\n${range.text}`,
+    )
+    .join("\n\n");
+
+  return {
+    text: formatted,
+    returnedRanges,
+  };
+}
+
 function formatEditCall(
   args: EditRequestParams | undefined,
   state: EditRenderState,
@@ -665,6 +756,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
       const path = normalizedParams.path;
       const absolutePath = resolveToCwd(path, ctx.cwd);
       const returnMode = normalizedParams.returnMode ?? "changed";
+      const requestedReturnRanges = normalizedParams.returnRanges;
       const toolEdits = Array.isArray(normalizedParams.edits)
         ? (normalizedParams.edits as HashlineToolEdit[])
         : [];
@@ -778,13 +870,18 @@ export function registerEditTool(pi: ExtensionAPI): void {
           const noopFullPreview = returnMode === "full"
             ? formatHashlineReadPreview(originalNormalized, { offset: 1 })
             : undefined;
+          const noopRangePreviews = returnMode === "ranges"
+            ? formatRequestedRangePreviews(originalNormalized, requestedReturnRanges!)
+            : undefined;
           return {
             content: [
               {
                 type: "text",
                 text: returnMode === "full"
                   ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\nFull content:\n${noopFullPreview!.text}`
-                  : `No changes made to ${path}\nClassification: noop\n${noopDetails}`,
+                  : returnMode === "ranges"
+                    ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\nRequested ranges:\n${noopRangePreviews!.text}`
+                    : `No changes made to ${path}\nClassification: noop\n${noopDetails}`,
               },
             ],
             details: {
@@ -795,6 +892,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
               ...(noopFullPreview?.nextOffset !== undefined
                 ? { nextOffset: noopFullPreview.nextOffset }
                 : {}),
+              ...(noopRangePreviews ? { returnedRanges: noopRangePreviews.returnedRanges } : {}),
             },
           };
         }
@@ -824,6 +922,28 @@ export function registerEditTool(pi: ExtensionAPI): void {
               firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
               snapshotId: updatedSnapshotId,
               ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
+              ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
+            },
+          };
+        }
+
+        if (returnMode === "ranges") {
+          const rangePreviews = formatRequestedRangePreviews(result, requestedReturnRanges!);
+          const warningsBlock = warnings?.length
+            ? `\n\nWarnings:\n${warnings.join("\n")}`
+            : "";
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\nRequested ranges:\n${rangePreviews.text}`,
+              },
+            ],
+            details: {
+              diff: diffResult.diff,
+              firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
+              snapshotId: updatedSnapshotId,
+              returnedRanges: rangePreviews.returnedRanges,
               ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
             },
           };

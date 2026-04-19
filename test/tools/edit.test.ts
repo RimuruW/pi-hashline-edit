@@ -88,6 +88,27 @@ describe("assertEditRequest", () => {
   });
 });
 
+  it("requires returnRanges when returnMode is ranges", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        returnMode: "ranges",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+      } as any),
+    ).toThrow(/returnRanges/i);
+  });
+
+  it("rejects returnRanges outside ranges returnMode", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        returnMode: "changed",
+        returnRanges: [{ start: 1, end: 2 }],
+        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+      } as any),
+    ).toThrow(/returnRanges/i);
+  });
+
 describe("registerEditTool", () => {
   it("publishes a schema that validates strict hashline payloads", () => {
     const ajv = new Ajv({ allErrors: true });

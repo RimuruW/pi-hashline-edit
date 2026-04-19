@@ -9,6 +9,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 <payload>
 ```json
 {
+{
   "path": "src/main.ts",
   "snapshotId": "v1|/abs/path|...",
   "returnMode": "changed",
@@ -20,8 +21,10 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 
 - `path` — target file path.
 - `snapshotId` — optional fingerprint returned by `read`; when provided, `edit` rejects stale file state before applying changes.
-- `returnMode` — optional response mode. `changed` (default) returns diff + updated anchors; `full` returns the post-edit file content preview and `nextOffset` when truncated.
+- `returnMode` — optional response mode. `changed` (default) returns diff + updated anchors; `full` returns the post-edit file content preview and `nextOffset` when truncated; `ranges` returns only the requested post-edit ranges.
+- `returnRanges` — required when `returnMode="ranges"`. Array of `{ "start": number, "end"?: number }` post-edit line windows to return.
 - `edits` — array of edit operations.
+</payload>
 </payload>
 
 <operations>
@@ -82,6 +85,22 @@ Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and
   ]
 }
 ```
+
+Return only selected post-edit ranges:
+
+```json
+{
+  "path": "src/main.ts",
+  "returnMode": "ranges",
+  "returnRanges": [
+    { "start": 1, "end": 20 },
+    { "start": 80, "end": 90 }
+  ],
+  "edits": [
+    { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
+  ]
+}
+```
 </examples>
 
 <constraints>
@@ -101,8 +120,10 @@ Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and
 A successful edit returns:
 - `Diff preview` — in `returnMode="changed"`, changed lines with `+`/`-` markers.
 - `Full content` — in `returnMode="full"`, the post-edit file content preview. If it exceeds the budget, the response includes `nextOffset` and a continuation hint using `offset=...`.
+- `Requested ranges` — in `returnMode="ranges"`, only the requested post-edit hashline windows.
 - `SnapshotId` — the fresh post-edit fingerprint for subsequent edits on the same file.
 - `Updated anchors` — fresh `LINE#HASH` references for the changed region, usable in the next call without re-reading. For edits outside that region, use `read` first.
+</after-edit>
 </after-edit>
 
 <errors>
