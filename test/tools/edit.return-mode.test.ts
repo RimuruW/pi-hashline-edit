@@ -32,9 +32,10 @@ describe("edit tool returnMode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Full content:");
-      expect(getText(result)).toContain(`1#${computeLineHash(1, "aaa")}:aaa`);
-      expect(getText(result)).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
+      expect(getText(result)).toContain("Structure outline:");
+      expect(getText(result)).toContain("details.fullContent");
+      expect(result.details?.fullContent?.text).toContain(`1#${computeLineHash(1, "aaa")}:aaa`);
+      expect(result.details?.fullContent?.text).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
       expect(result.details?.nextOffset).toBeUndefined();
     });
   });
@@ -64,9 +65,10 @@ describe("edit tool returnMode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Full content:");
-      expect(getText(result)).toContain("Use offset=");
-      expect(result.details?.nextOffset).toBeGreaterThan(1);
+      expect(getText(result)).toContain("Structure outline:");
+      expect(getText(result)).toContain("details.fullContent");
+      expect(result.details?.fullContent?.text).toContain(`1#${computeLineHash(1, "LINE-1")}:LINE-1`);
+      expect(result.details?.fullContent?.nextOffset).toBeGreaterThan(1);
     });
   });
 
@@ -98,13 +100,13 @@ describe("edit tool returnMode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Requested ranges:");
-      expect(getText(result)).toContain("--- Range 1 (lines 1-2) ---");
-      expect(getText(result)).toContain(`1#${computeLineHash(1, "aaa")}:aaa`);
-      expect(getText(result)).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
-      expect(getText(result)).toContain("--- Range 2 (lines 4-4) ---");
-      expect(getText(result)).toContain(`4#${computeLineHash(4, "ddd")}:ddd`);
-      expect(getText(result)).not.toContain(`3#${computeLineHash(3, "ccc")}:ccc`);
+      expect(getText(result)).toContain("Structure outline:");
+      expect(getText(result)).toContain("details.returnedRanges");
+      expect(result.details?.returnedRanges).toHaveLength(2);
+      expect(result.details?.returnedRanges?.[0]?.text).toContain(`1#${computeLineHash(1, "aaa")}:aaa`);
+      expect(result.details?.returnedRanges?.[0]?.text).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
+      expect(result.details?.returnedRanges?.[1]?.text).toContain(`4#${computeLineHash(4, "ddd")}:ddd`);
+      expect(result.details?.returnedRanges?.[0]?.text).not.toContain(`3#${computeLineHash(3, "ccc")}:ccc`);
     });
   });
 });

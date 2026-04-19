@@ -23,7 +23,9 @@ import {
   applyHashlineEdits,
   computeAffectedLineRange,
   computeLegacyEditLineRange,
+  computeLineHash,
   formatHashlineRegion,
+  parseLineRef,
   resolveEditAnchors,
   type HashlineToolEdit,
 } from "./hashline";
@@ -90,6 +92,11 @@ type ReturnedRangePreview = {
   nextOffset?: number;
 };
 
+type FullContentPreview = {
+  text: string;
+  nextOffset?: number;
+};
+
 type EditRequestParams = {
   path: string;
   snapshotId?: string;
@@ -116,7 +123,9 @@ type HashlineEditToolDetails = {
   snapshotId?: string;
   classification?: "noop";
   nextOffset?: number;
+  fullContent?: FullContentPreview;
   returnedRanges?: ReturnedRangePreview[];
+  structureOutline?: string[];
 };
 
 const EDIT_DESC = readFileSync(
@@ -155,19 +164,90 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function getVisibleLines(text: string): string[] {
+  if (text.length === 0) {
+    return [];
+  }
+  const lines = text.split("\n");
+  return text.endsWith("\n") ? lines.slice(0, -1) : lines;
+}
+
+function collectRequestedAnchorLines(edits: HashlineToolEdit[]): number[] {
+  const lines = new Set<number>();
+  for (const edit of edits) {
+    if (edit.op === "replace_text") {
+      continue;
+    }
+    for (const ref of [edit.pos, edit.end]) {
+      if (typeof ref !== "string") {
+        continue;
+      }
+      try {
+        lines.add(parseLineRef(ref).line);
+      } catch {
+        continue;
+      }
+    }
+  }
+  return [...lines].sort((left, right) => left - right);
+}
+
+function formatSnapshotRefreshAnchors(text: string, anchorLines: number[]): string {
+  const visibleLines = getVisibleLines(text);
+  if (visibleLines.length === 0) {
+    return "File is empty. Use read to confirm the current state before retrying.";
+  }
+
+  const focusLines = [...new Set(anchorLines)]
+    .filter((line) => line >= 1 && line <= visibleLines.length)
+    .sort((left, right) => left - right);
+
+  if (focusLines.length === 0) {
+    return formatHashlineReadPreview(text, { offset: 1, limit: 12 }).text;
+  }
+
+  const displayLines = new Set<number>();
+  for (const line of focusLines) {
+    for (let current = Math.max(1, line - 4); current <= Math.min(visibleLines.length, line + 4); current++) {
+      displayLines.add(current);
+    }
+  }
+
+  const sorted = [...displayLines].sort((left, right) => left - right);
+  const focusSet = new Set<number>(focusLines);
+  const out: string[] = [];
+  let previousLine = -1;
+  for (const lineNumber of sorted) {
+    if (previousLine !== -1 && lineNumber > previousLine + 1) {
+      out.push("    ...");
+    }
+    previousLine = lineNumber;
+    const content = visibleLines[lineNumber - 1]!;
+    const hashline = `${lineNumber}#${computeLineHash(lineNumber, content)}:${content}`;
+    out.push(focusSet.has(lineNumber) ? `>>> ${hashline}` : `    ${hashline}`);
+  }
+  return out.join("\n");
+}
+
 async function assertSnapshotIdMatches(
   absolutePath: string,
   rawPath: string,
   expectedSnapshotId: string | undefined,
+  options?: { currentText?: string; anchorLines?: number[] },
 ): Promise<string> {
-  const cached = getCachedSnapshot(absolutePath);
-  const snapshot = cached && cached.snapshotId === expectedSnapshotId
-    ? cached
+  const snapshot = expectedSnapshotId === undefined
+    ? getCachedSnapshot(absolutePath) ?? await getFileSnapshot(absolutePath)
     : await getFileSnapshot(absolutePath);
 
   if (expectedSnapshotId !== undefined && snapshot.snapshotId !== expectedSnapshotId) {
+    const refreshBlock = options?.currentText !== undefined
+      ? `\n\nRefresh anchors:\n${formatSnapshotRefreshAnchors(
+          options.currentText,
+          options.anchorLines ?? [],
+        )}`
+      : "";
     throw new Error(
-      `Stale snapshotId for ${rawPath}. Re-run read and retry with the latest snapshotId. Current snapshotId: ${snapshot.snapshotId}`,
+      `Stale snapshotId for ${rawPath}. Re-run read and retry with the latest snapshotId. Current snapshotId: ${snapshot.snapshotId}${refreshBlock}`,
     );
   }
 
@@ -572,6 +652,72 @@ function formatRequestedRangePreviews(
   };
 }
 
+const STRUCTURE_MARKER_RE = /^(#{1,6}\s+.+|(export\s+)?(async\s+)?function\s+\w+|(export\s+)?class\s+\w+|(export\s+)?interface\s+\w+|(export\s+)?type\s+\w+|(export\s+)?enum\s+\w+|(const|let|var)\s+\w+\s*=\s*(async\s*)?\()/;
+
+function truncateOutlineEntry(text: string, max = 88): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+function collectOutlineEntries(previewText: string): string[] {
+  const structural: string[] = [];
+  const fallback: string[] = [];
+
+  for (const line of previewText.split("\n")) {
+    const match = line.match(/^(\d+)#[A-Z]{2}:(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const lineNumber = match[1]!;
+    const content = match[2]!.trim();
+    if (content.length === 0) {
+      continue;
+    }
+    const entry = `${lineNumber}: ${truncateOutlineEntry(content.replace(/\s+/g, " "))}`;
+    if (STRUCTURE_MARKER_RE.test(content)) {
+      structural.push(entry);
+      continue;
+    }
+    if (fallback.length < 6) {
+      fallback.push(entry);
+    }
+  }
+
+  const entries = structural.length > 0 ? structural : fallback;
+  return entries.slice(0, 8);
+}
+
+function buildStructureOutline(
+  sections: Array<{ label?: string; previewText: string }>,
+): { text: string; outline: string[] } {
+  const outlineLines = ["Structure outline:"];
+  const detailOutline: string[] = [];
+  const useSectionLabels = sections.length > 1;
+
+  for (const section of sections) {
+    const entries = collectOutlineEntries(section.previewText);
+    if (useSectionLabels && section.label) {
+      outlineLines.push(`- ${section.label}`);
+    }
+
+    if (entries.length === 0) {
+      const fallback = "No structural markers found in returned content.";
+      outlineLines.push(useSectionLabels ? `  - ${fallback}` : `- ${fallback}`);
+      detailOutline.push(section.label ? `${section.label}: ${fallback}` : fallback);
+      continue;
+    }
+
+    for (const entry of entries) {
+      outlineLines.push(useSectionLabels ? `  - ${entry}` : `- ${entry}`);
+      detailOutline.push(section.label ? `${section.label}: ${entry}` : entry);
+    }
+  }
+
+  return {
+    text: outlineLines.join("\n"),
+    outline: detailOutline,
+  };
+}
+
 function formatEditCall(
   args: EditRequestParams | undefined,
   state: EditRenderState,
@@ -653,9 +799,11 @@ export async function computeEditPreview(
       };
     }
 
-    await assertSnapshotIdMatches(absolutePath, path, params.snapshotId);
-
     const originalNormalized = normalizeToLF(stripBom(file.text).text);
+    await assertSnapshotIdMatches(absolutePath, path, params.snapshotId, {
+      currentText: originalNormalized,
+      anchorLines: collectRequestedAnchorLines(toolEdits),
+    });
 
     let result: string;
     if (toolEdits.length > 0) {
@@ -803,16 +951,19 @@ export function registerEditTool(pi: ExtensionAPI): void {
           );
         }
 
-        const snapshotId = await assertSnapshotIdMatches(
-          absolutePath,
-          path,
-          normalizedParams.snapshotId,
-        );
-
         throwIfAborted(signal);
         const { bom, text: content } = stripBom(file.text);
         const originalEnding = detectLineEnding(content);
         const originalNormalized = normalizeToLF(content);
+        const snapshotId = await assertSnapshotIdMatches(
+          absolutePath,
+          path,
+          normalizedParams.snapshotId,
+          {
+            currentText: originalNormalized,
+            anchorLines: collectRequestedAnchorLines(toolEdits),
+          },
+        );
 
         let result: string;
         let warnings: string[] | undefined;
@@ -873,14 +1024,24 @@ export function registerEditTool(pi: ExtensionAPI): void {
           const noopRangePreviews = returnMode === "ranges"
             ? formatRequestedRangePreviews(originalNormalized, requestedReturnRanges!)
             : undefined;
+          const noopOutline = returnMode === "full"
+            ? buildStructureOutline([{ previewText: noopFullPreview!.text }])
+            : returnMode === "ranges"
+              ? buildStructureOutline(
+                  noopRangePreviews!.returnedRanges.map((range, index) => ({
+                    label: `Range ${index + 1} (lines ${range.start}-${range.end})`,
+                    previewText: range.text,
+                  })),
+                )
+              : undefined;
           return {
             content: [
               {
                 type: "text",
                 text: returnMode === "full"
-                  ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\nFull content:\n${noopFullPreview!.text}`
+                  ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\n${noopOutline!.text}\n\nFull content is available in details.fullContent.`
                   : returnMode === "ranges"
-                    ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\nRequested ranges:\n${noopRangePreviews!.text}`
+                    ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\n${noopOutline!.text}\n\nRequested range payloads are available in details.returnedRanges.`
                     : `No changes made to ${path}\nClassification: noop\n${noopDetails}`,
               },
             ],
@@ -892,7 +1053,18 @@ export function registerEditTool(pi: ExtensionAPI): void {
               ...(noopFullPreview?.nextOffset !== undefined
                 ? { nextOffset: noopFullPreview.nextOffset }
                 : {}),
+              ...(noopFullPreview
+                ? {
+                    fullContent: {
+                      text: noopFullPreview.text,
+                      ...(noopFullPreview.nextOffset !== undefined
+                        ? { nextOffset: noopFullPreview.nextOffset }
+                        : {}),
+                    },
+                  }
+                : {}),
               ...(noopRangePreviews ? { returnedRanges: noopRangePreviews.returnedRanges } : {}),
+              ...(noopOutline ? { structureOutline: noopOutline.outline } : {}),
             },
           };
         }
@@ -907,6 +1079,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
         const diffResult = generateDiffString(originalNormalized, result);
         if (returnMode === "full") {
           const fullPreview = formatHashlineReadPreview(result, { offset: 1 });
+          const outline = buildStructureOutline([{ previewText: fullPreview.text }]);
           const warningsBlock = warnings?.length
             ? `\n\nWarnings:\n${warnings.join("\n")}`
             : "";
@@ -914,7 +1087,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
             content: [
               {
                 type: "text",
-                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\nFull content:\n${fullPreview.text}`,
+                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\n${outline.text}\n\nFull content is available in details.fullContent.`,
               },
             ],
             details: {
@@ -922,6 +1095,11 @@ export function registerEditTool(pi: ExtensionAPI): void {
               firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
               snapshotId: updatedSnapshotId,
               ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
+              fullContent: {
+                text: fullPreview.text,
+                ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
+              },
+              structureOutline: outline.outline,
               ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
             },
           };
@@ -929,6 +1107,12 @@ export function registerEditTool(pi: ExtensionAPI): void {
 
         if (returnMode === "ranges") {
           const rangePreviews = formatRequestedRangePreviews(result, requestedReturnRanges!);
+          const outline = buildStructureOutline(
+            rangePreviews.returnedRanges.map((range, index) => ({
+              label: `Range ${index + 1} (lines ${range.start}-${range.end})`,
+              previewText: range.text,
+            })),
+          );
           const warningsBlock = warnings?.length
             ? `\n\nWarnings:\n${warnings.join("\n")}`
             : "";
@@ -936,7 +1120,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
             content: [
               {
                 type: "text",
-                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\nRequested ranges:\n${rangePreviews.text}`,
+                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\n${outline.text}\n\nRequested range payloads are available in details.returnedRanges.`,
               },
             ],
             details: {
@@ -944,6 +1128,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
               firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
               snapshotId: updatedSnapshotId,
               returnedRanges: rangePreviews.returnedRanges,
+              structureOutline: outline.outline,
               ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
             },
           };

@@ -20,11 +20,10 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 ```
 
 - `path` — target file path.
-- `snapshotId` — optional fingerprint returned by `read`; when provided, `edit` rejects stale file state before applying changes.
-- `returnMode` — optional response mode. `changed` (default) returns diff + updated anchors; `full` returns the post-edit file content preview and `nextOffset` when truncated; `ranges` returns only the requested post-edit ranges.
+- `snapshotId` — optional fingerprint returned by `read`; when provided, `edit` rejects stale file state before applying changes and returns refresh anchors around the requested edit.
+- `returnMode` — optional response mode. `changed` (default) returns diff + updated anchors; `full` returns a compact structure outline in `content` and the returned hashline block in `details.fullContent`; `ranges` returns a compact structure outline in `content` and the requested post-edit windows in `details.returnedRanges`.
 - `returnRanges` — required when `returnMode="ranges"`. Array of `{ "start": number, "end"?: number }` post-edit line windows to return.
 - `edits` — array of edit operations.
-</payload>
 </payload>
 
 <operations>
@@ -119,16 +118,16 @@ Return only selected post-edit ranges:
 <after-edit>
 A successful edit returns:
 - `Diff preview` — in `returnMode="changed"`, changed lines with `+`/`-` markers.
-- `Full content` — in `returnMode="full"`, the post-edit file content preview. If it exceeds the budget, the response includes `nextOffset` and a continuation hint using `offset=...`.
-- `Requested ranges` — in `returnMode="ranges"`, only the requested post-edit hashline windows.
+- `Structure outline` — in `returnMode="full"` and `returnMode="ranges"`, `content` contains a compact regex-level outline of the returned content.
+- `details.fullContent` — in `returnMode="full"`, the post-edit hashline block plus optional `nextOffset` for continuation.
+- `details.returnedRanges` — in `returnMode="ranges"`, the requested post-edit hashline windows.
 - `SnapshotId` — the fresh post-edit fingerprint for subsequent edits on the same file.
 - `Updated anchors` — fresh `LINE#HASH` references for the changed region, usable in the next call without re-reading. For edits outside that region, use `read` first.
-</after-edit>
 </after-edit>
 
 <errors>
 - **Stale anchor**: the file has changed since your last `read`. The error shows the current content with `>>>` marking the lines you need. Copy those `>>> LINE#HASH` values and retry. For a range replace, update both `pos` and `end`.
-- **Stale snapshotId**: the file changed since your last `read`. Re-run `read` and retry with the latest `snapshotId`.
+- **Stale snapshotId**: the file changed since your last `read`. Re-run `read` and retry with the latest `snapshotId`. The error also includes `Refresh anchors:` with a broader current hashline window around the requested edit when possible.
 - **Identical content**: unchanged edits return `classification: "noop"` instead of throwing. Re-read only if you expected a real change.
 </errors>
 </errors>

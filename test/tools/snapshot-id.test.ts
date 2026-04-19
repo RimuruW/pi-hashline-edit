@@ -67,8 +67,8 @@ describe("snapshotId protocol", () => {
     });
   });
 
-  it("rejects a stale snapshotId before applying edits", async () => {
-    await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
+  it("rejects a stale snapshotId before applying edits and returns refresh anchors", async () => {
+    await withTempFile("sample.txt", "one\ntwo\nthree\nfour\nfive\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
       const readTool = getTool("read");
@@ -83,10 +83,11 @@ describe("snapshotId protocol", () => {
       );
       const snapshotId = readResult.details?.snapshotId;
 
-      await writeFile(path, "alpha\nBETA\n", "utf-8");
+      await writeFile(path, "one\nTWO!\nthree\nfour\nfive\n", "utf-8");
 
-      await expect(
-        editTool.execute(
+      let errorMessage = "";
+      try {
+        await editTool.execute(
           "e1",
           {
             path: "sample.txt",
@@ -94,16 +95,23 @@ describe("snapshotId protocol", () => {
             edits: [
               {
                 op: "replace",
-                pos: `2#${computeLineHash(2, "beta")}`,
-                lines: ["BETA2"],
+                pos: `4#${computeLineHash(4, "four")}`,
+                lines: ["FOUR"],
               },
             ],
           },
           undefined,
           undefined,
           { cwd, hasUI: true, ui: { notify() {} } } as any,
-        ),
-      ).rejects.toThrow(/snapshotId|stale/i);
+        );
+      } catch (error: unknown) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(errorMessage).toMatch(/snapshotId|stale/i);
+      expect(errorMessage).toContain("Refresh anchors:");
+      expect(errorMessage).toContain(`>>> 4#${computeLineHash(4, "four")}:four`);
+      expect(errorMessage).toContain(`2#${computeLineHash(2, "TWO!")}:TWO!`);
     });
   });
 });
