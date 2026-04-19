@@ -1,5 +1,5 @@
 import { StringEnum } from "@mariozechner/pi-ai";
-import { Text } from "@mariozechner/pi-tui";
+import { Markdown, Text } from "@mariozechner/pi-tui";
 import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
@@ -561,61 +561,137 @@ function formatPreviewDiff(
   return shown.join("\n");
 }
 
-function formatRenderedEditResult(
+function getRenderedEditTextContent(
   result: { content?: Array<{ type: string; text?: string }> },
-  options: { expanded: boolean; isError: boolean },
-  theme: { fg: (token: string, text: string) => string },
 ): string | undefined {
   const textContent = result.content?.find(
     (entry): entry is { type: "text"; text: string } =>
       entry.type === "text" && typeof entry.text === "string",
   );
-  if (!textContent) {
-    return undefined;
+  return textContent?.text;
+}
+
+function trimEdgeEmptyLines(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start] === "") {
+    start++;
+  }
+  while (end > start && lines[end - 1] === "") {
+    end--;
   }
 
-  if (options.isError) {
-    return `\n${theme.fg("error", textContent.text)}`;
-  }
+  return lines.slice(start, end);
+}
 
-  const lines = textContent.text.split("\n");
+function isRenderedEditSectionBoundary(line: string): boolean {
+  return (
+    line === "Diff preview:" ||
+    line.startsWith("--- Updated anchors") ||
+    line === "Warnings:" ||
+    line === "Structure outline:" ||
+    /^--- Range \d+ /.test(line)
+  );
+}
+
+function formatRenderedEditResultMarkdown(
+  text: string,
+  options: { expanded: boolean },
+): string {
+  const lines = text.split("\n");
   const maxLines = options.expanded ? 60 : 20;
-  const shown = lines.slice(0, maxLines).map((line) => {
-    if (line.length === 0) {
-      return line;
+  const shownLines = lines.slice(0, maxLines);
+  const sections: string[] = [];
+  let plainLines: string[] = [];
+
+  const flushPlainLines = () => {
+    const trimmed = trimEdgeEmptyLines(plainLines);
+    if (trimmed.length > 0) {
+      sections.push(trimmed.join("\n"));
     }
-    if (line.startsWith("Updated ")) {
-      return theme.fg("success", line);
+    plainLines = [];
+  };
+
+  let index = 0;
+  while (index < shownLines.length) {
+    const line = shownLines[index]!;
+
+    if (line === "Diff preview:") {
+      flushPlainLines();
+      index++;
+      const bodyLines: string[] = [];
+      while (index < shownLines.length && !isRenderedEditSectionBoundary(shownLines[index]!)) {
+        bodyLines.push(shownLines[index]!);
+        index++;
+      }
+      sections.push(["#### Diff preview", "```diff", ...trimEdgeEmptyLines(bodyLines), "```"].join("\n"));
+      continue;
     }
-    if (line === "Warnings:") {
-      return theme.fg("warning", line);
-    }
-    if (line === "Diff preview:" || line.startsWith("Changes: ")) {
-      return theme.fg("muted", line);
-    }
+
     if (line.startsWith("--- Updated anchors")) {
-      return theme.fg("accent", line);
+      flushPlainLines();
+      const title = line.replace(/^---\s*/, "").replace(/\s*---$/, "");
+      index++;
+      const bodyLines: string[] = [];
+      while (index < shownLines.length && !isRenderedEditSectionBoundary(shownLines[index]!)) {
+        bodyLines.push(shownLines[index]!);
+        index++;
+      }
+      sections.push([`#### ${title}`, "```text", ...trimEdgeEmptyLines(bodyLines), "```"].join("\n"));
+      continue;
     }
-    if (line.startsWith("+")) {
-      return theme.fg("success", line);
-    }
-    if (line.startsWith("-")) {
-      return theme.fg("error", line);
-    }
-    if (line.startsWith("... ")) {
-      return theme.fg("muted", line);
-    }
-    if (/^\d+#/.test(line)) {
-      return theme.fg("toolOutput", line);
-    }
-    return theme.fg("dim", line);
-  });
+
+    plainLines.push(line);
+    index++;
+  }
+
+  flushPlainLines();
 
   if (lines.length > maxLines) {
-    shown.push(theme.fg("muted", `... ${lines.length - maxLines} more result lines`));
+    sections.push(`... ${lines.length - maxLines} more result lines`);
   }
 
-  return `\n${shown.join("\n")}`;
+  return sections.join("\n\n");
+}
+
+function createRenderedEditMarkdownTheme(theme: {
+  fg: (token: string, text: string) => string;
+  bold: (text: string) => string;
+  italic?: (text: string) => string;
+  underline?: (text: string) => string;
+  strikethrough?: (text: string) => string;
+}) {
+  return {
+    heading: (text: string) => theme.fg("mdHeading", text),
+    link: (text: string) => theme.fg("mdLink", text),
+    linkUrl: (text: string) => theme.fg("mdLinkUrl", text),
+    code: (text: string) => theme.fg("mdCode", text),
+    codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
+    codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
+    quote: (text: string) => theme.fg("mdQuote", text),
+    quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
+    hr: (text: string) => theme.fg("mdHr", text),
+    listBullet: (text: string) => theme.fg("mdListBullet", text),
+    bold: (text: string) => theme.bold(text),
+    italic: (text: string) => theme.italic ? theme.italic(text) : text,
+    underline: (text: string) => theme.underline ? theme.underline(text) : text,
+    strikethrough: (text: string) => theme.strikethrough ? theme.strikethrough(text) : text,
+    highlightCode: (code: string, lang?: string) =>
+      code.split("\n").map((line) => {
+        if (lang === "diff") {
+          if (line.startsWith("+") && !line.startsWith("+++")) {
+            return theme.fg("toolDiffAdded", line);
+          }
+          if (line.startsWith("-") && !line.startsWith("---")) {
+            return theme.fg("toolDiffRemoved", line);
+          }
+          return theme.fg("toolDiffContext", line);
+        }
+
+        return theme.fg("mdCodeBlock", line);
+      }),
+  };
 }
 
 function formatRequestedRangePreviews(
@@ -886,20 +962,34 @@ export function registerEditTool(pi: ExtensionAPI): void {
     },
 
     renderResult(result, { expanded, isPartial }, theme, context) {
-      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
       if (isPartial) {
+        const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
         text.setText(theme.fg("warning", "Editing..."));
         return text;
       }
 
-      text.setText(
-        formatRenderedEditResult(
-          result as { content?: Array<{ type: string; text?: string }> },
-          { expanded, isError: Boolean(context.isError) },
-          theme,
-        ) ?? "",
+      const renderedText = getRenderedEditTextContent(
+        result as { content?: Array<{ type: string; text?: string }> },
       );
-      return text;
+      if (!renderedText) {
+        return new Text("", 0, 0);
+      }
+
+      if (context.isError) {
+        const text = context.lastComponent instanceof Text
+          ? context.lastComponent
+          : new Text("", 0, 0);
+        text.setText(`\n${theme.fg("error", renderedText)}`);
+        return text;
+      }
+
+      const markdown = context.lastComponent instanceof Markdown
+        ? context.lastComponent
+        : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
+      markdown.setText(
+        formatRenderedEditResultMarkdown(renderedText, { expanded }),
+      );
+      return markdown;
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

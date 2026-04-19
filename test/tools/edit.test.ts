@@ -215,7 +215,7 @@ describe("registerEditTool", () => {
     }));
   });
 
-  it("registers a custom renderResult that preserves hashline diff preview after execution", async () => {
+  it("renders diff preview and updated anchors inside fenced blocks", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       registerEditTool(pi);
@@ -246,7 +246,7 @@ describe("registerEditTool", () => {
         { expanded: false, isPartial: false },
         {
           bold: (text: string) => text,
-          fg: (_token: string, text: string) => text,
+          fg: (token: string, text: string) => `[${token}]${text}[/${token}]`,
         },
         {
           args: editArgs,
@@ -258,7 +258,10 @@ describe("registerEditTool", () => {
       const rendered = component.render(200).join("\n");
 
       expect(rendered).toContain("Updated sample.txt");
-      expect(rendered).toContain("Diff preview:");
+      expect(rendered).toContain("```diff");
+      expect(rendered).toContain("```text");
+      expect(rendered).toContain("[toolDiffRemoved]");
+      expect(rendered).toContain("[toolDiffAdded]");
       expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
     });
   });
