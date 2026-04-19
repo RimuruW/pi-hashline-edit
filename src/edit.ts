@@ -39,12 +39,14 @@ const hashlineEditLinesSchema = Type.Union([
 
 const hashlineEditItemSchema = Type.Object(
   {
-    op: StringEnum(["replace", "append", "prepend"] as const, {
-      description: 'edit operation: "replace", "append", or "prepend"',
+    op: StringEnum(["replace", "append", "prepend", "replace_text"] as const, {
+      description: 'edit operation: "replace", "append", "prepend", or "replace_text"',
     }),
     pos: Type.Optional(Type.String({ description: "anchor" })),
     end: Type.Optional(Type.String({ description: "limit position" })),
-    lines: hashlineEditLinesSchema,
+    lines: Type.Optional(hashlineEditLinesSchema),
+    oldText: Type.Optional(Type.String({ description: "exact text to replace" })),
+    newText: Type.Optional(Type.String({ description: "replacement text" })),
   },
   { additionalProperties: false },
 );
@@ -92,7 +94,7 @@ const EDIT_PROMPT_SNIPPET = readFileSync(
 ).trim();
 
 const ROOT_KEYS = new Set(["path", "edits", "oldText", "newText", "old_text", "new_text"]);
-const ITEM_KEYS = new Set(["op", "pos", "end", "lines"]);
+const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
 const LEGACY_KEYS = ["oldText", "newText", "old_text", "new_text"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -239,9 +241,14 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
     if (typeof edit.op !== "string") {
       throw new Error(`Edit ${index} requires an "op" string.`);
     }
-    if (edit.op !== "replace" && edit.op !== "append" && edit.op !== "prepend") {
+    if (
+      edit.op !== "replace" &&
+      edit.op !== "append" &&
+      edit.op !== "prepend" &&
+      edit.op !== "replace_text"
+    ) {
       throw new Error(
-        `Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", or "prepend".`,
+        `Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", "prepend", or "replace_text".`,
       );
     }
 
@@ -251,16 +258,44 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
     if (hasOwn(edit, "end") && typeof edit.end !== "string") {
       throw new Error(`Edit ${index} field "end" must be a string when provided.`);
     }
-    if (!hasOwn(edit, "lines")) {
-      throw new Error(`Edit ${index} requires a "lines" field.`);
+    if (hasOwn(edit, "oldText") && typeof edit.oldText !== "string") {
+      throw new Error(`Edit ${index} field "oldText" must be a string when provided.`);
+    }
+    if (hasOwn(edit, "newText") && typeof edit.newText !== "string") {
+      throw new Error(`Edit ${index} field "newText" must be a string when provided.`);
     }
     if (
+      hasOwn(edit, "lines") &&
       edit.lines !== null &&
       typeof edit.lines !== "string" &&
       !isStringArray(edit.lines)
     ) {
       throw new Error(
         `Edit ${index} field "lines" must be a string array, string, or null.`,
+      );
+    }
+
+    if (edit.op === "replace_text") {
+      if (typeof edit.oldText !== "string" || typeof edit.newText !== "string") {
+        throw new Error(
+          `Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`,
+        );
+      }
+      if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "lines")) {
+        throw new Error(
+          `Edit ${index} with op "replace_text" only supports "oldText" and "newText".`,
+        );
+      }
+      continue;
+    }
+
+    if (!hasOwn(edit, "lines")) {
+      throw new Error(`Edit ${index} requires a "lines" field.`);
+    }
+
+    if (hasOwn(edit, "oldText") || hasOwn(edit, "newText")) {
+      throw new Error(
+        `Edit ${index} with op "${edit.op}" does not support "oldText" or "newText".`,
       );
     }
 

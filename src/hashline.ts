@@ -13,7 +13,8 @@ export type Anchor = { line: number; hash: string; textHint?: string };
 export type HashlineEdit =
   | { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
   | { op: "append"; pos?: Anchor; lines: string[] }
-  | { op: "prepend"; pos?: Anchor; lines: string[] };
+  | { op: "prepend"; pos?: Anchor; lines: string[] }
+  | { op: "replace_text"; oldText: string; newText: string };
 
 interface HashMismatch {
   line: number;
@@ -303,6 +304,7 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  * - replace + pos + end → range replace
  * - append + pos → append after that anchor
  * - prepend + pos → prepend before that anchor
+ * - replace_text + oldText/newText → exact unique text replace
  * - no anchors → file-level append/prepend (only for those ops)
  *
  * Unknown or missing ops are rejected explicitly.
@@ -310,11 +312,15 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
 export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
   const result: HashlineEdit[] = [];
   for (const edit of edits) {
-    const lines = hashlineParseText(edit.lines);
     const op = edit.op;
-    if (op !== "replace" && op !== "append" && op !== "prepend") {
+    if (
+      op !== "replace" &&
+      op !== "append" &&
+      op !== "prepend" &&
+      op !== "replace_text"
+    ) {
       throw new Error(
-        `Unknown edit op "${op}". Expected "replace", "append", or "prepend".`,
+        `Unknown edit op "${op}". Expected "replace", "append", "prepend", or "replace_text".`,
       );
     }
 
@@ -328,7 +334,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
           op: "replace",
           pos: parseAnchorRef(edit.pos),
           ...(edit.end ? { end: parseAnchorRef(edit.end) } : {}),
-          lines,
+          lines: hashlineParseText(edit.lines ?? null),
         });
         break;
       }
@@ -340,7 +346,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         result.push({
           op: "append",
           ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
-          lines,
+          lines: hashlineParseText(edit.lines ?? null),
         });
         break;
       }
@@ -352,7 +358,21 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         result.push({
           op: "prepend",
           ...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
-          lines,
+          lines: hashlineParseText(edit.lines ?? null),
+        });
+        break;
+      }
+      case "replace_text": {
+        const oldText = normalizeExactText(edit.oldText);
+        const newText = normalizeExactText(edit.newText);
+        if (oldText === undefined || newText === undefined) {
+          throw new Error('replace_text requires string "oldText" and "newText" fields.');
+        }
+
+        result.push({
+          op: "replace_text",
+          oldText,
+          newText,
         });
         break;
       }
@@ -368,14 +388,27 @@ export type HashlineToolEdit = {
   op: string;
   pos?: string;
   end?: string;
-  lines: string[] | string | null;
+  lines?: string[] | string | null;
+  oldText?: string;
+  newText?: string;
 };
+
+function normalizeExactText(text: string | undefined): string | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
+
+  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+}
 
 function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   edits: HashlineEdit[],
   warnings: string[],
 ): void {
   for (const edit of edits) {
+    if (edit.op === "replace_text") {
+      continue;
+    }
     if (edit.lines.some((line) => /\\uDDDD/i.test(line))) {
       warnings.push(
         "Detected literal \\uDDDD in edit content; no autocorrection applied. Verify whether this should be a real Unicode escape or plain text.",
@@ -384,20 +417,47 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   }
 }
 
-type NormalizedEditTarget =
-  | {
-      kind: "replace";
-      index: number;
-      label: string;
-      startLine: number;
-      endLine: number;
+type ResolvedEditSpan = {
+  kind: "replace" | "insert";
+  index: number;
+  label: string;
+  start: number;
+  end: number;
+  replacement: string;
+  boundary?: number;
+  insertMode?: "append-empty-origin" | "prepend-empty-origin";
+};
+
+type LineIndex = {
+  fileLines: string[];
+  lineStarts: number[];
+  hasTerminalNewline: boolean;
+};
+
+function buildLineIndex(content: string): LineIndex {
+  const fileLines = content.split("\n");
+  const lineStarts: number[] = [];
+  let offset = 0;
+
+  for (let index = 0; index < fileLines.length; index++) {
+    lineStarts.push(offset);
+    offset += fileLines[index]!.length;
+    if (index < fileLines.length - 1) {
+      offset += 1;
     }
-  | {
-      kind: "insert";
-      index: number;
-      label: string;
-      boundary: number;
-    };
+  }
+
+  return {
+    fileLines,
+    lineStarts,
+    hasTerminalNewline: content.endsWith("\n"),
+  };
+}
+
+function previewText(text: string): string {
+  const compact = text.replaceAll("\n", "\\n");
+  return compact.length > 32 ? `${compact.slice(0, 29)}...` : compact;
+}
 
 function describeEdit(edit: HashlineEdit): string {
   switch (edit.op) {
@@ -413,52 +473,14 @@ function describeEdit(edit: HashlineEdit): string {
       return edit.pos
         ? `prepend before ${edit.pos.line}#${edit.pos.hash}`
         : "prepend at BOF";
-  }
-}
-
-function normalizeEditTarget(
-  edit: HashlineEdit,
-  index: number,
-  fileLineCount: number,
-  hasTerminalNewline: boolean,
-): NormalizedEditTarget {
-  switch (edit.op) {
-    case "replace":
-      return {
-        kind: "replace",
-        index,
-        label: describeEdit(edit),
-        startLine: edit.pos.line,
-        endLine: edit.end?.line ?? edit.pos.line,
-      };
-    case "append": {
-      const eofBoundary = hasTerminalNewline && fileLineCount > 0
-        ? fileLineCount - 1
-        : fileLineCount;
-      return {
-        kind: "insert",
-        index,
-        label: describeEdit(edit),
-        boundary: edit.pos
-          ? hasTerminalNewline && edit.pos.line === fileLineCount
-            ? eofBoundary
-            : edit.pos.line
-          : eofBoundary,
-      };
-    }
-    case "prepend":
-      return {
-        kind: "insert",
-        index,
-        label: describeEdit(edit),
-        boundary: edit.pos ? edit.pos.line - 1 : 0,
-      };
+    case "replace_text":
+      return `replace_text \"${previewText(edit.oldText)}\"`;
   }
 }
 
 function throwEditConflict(
-  left: NormalizedEditTarget,
-  right: NormalizedEditTarget,
+  left: { index: number; label: string },
+  right: { index: number; label: string },
   reason: string,
 ): never {
   throw new Error(
@@ -487,30 +509,250 @@ function cloneHashlineEdit(edit: HashlineEdit): HashlineEdit {
         ...(edit.pos ? { pos: { ...edit.pos } } : {}),
         lines: [...edit.lines],
       };
+    case "replace_text":
+      return {
+        op: "replace_text",
+        oldText: edit.oldText,
+        newText: edit.newText,
+      };
   }
 }
 
-function assertNoConflictingEdits(
-  edits: HashlineEdit[],
-  fileLineCount: number,
-  hasTerminalNewline: boolean,
-): void {
-  const targets = edits.map((edit, index) =>
-    normalizeEditTarget(edit, index, fileLineCount, hasTerminalNewline)
-  );
+function computeInsertionBoundary(
+  edit: Extract<HashlineEdit, { op: "append" | "prepend" }>,
+  lineIndex: LineIndex,
+): number {
+  switch (edit.op) {
+    case "append": {
+      const fileLineCount = lineIndex.fileLines.length;
+      const eofBoundary = lineIndex.hasTerminalNewline && fileLineCount > 0
+        ? fileLineCount - 1
+        : fileLineCount;
+      return edit.pos
+        ? lineIndex.hasTerminalNewline && edit.pos.line === fileLineCount
+          ? eofBoundary
+          : edit.pos.line
+        : eofBoundary;
+    }
+    case "prepend":
+      return edit.pos ? edit.pos.line - 1 : 0;
+  }
+}
 
-  for (let i = 0; i < targets.length; i++) {
-    const left = targets[i]!;
-    for (let j = i + 1; j < targets.length; j++) {
-      const right = targets[j]!;
+function findExactUniqueTextMatch(
+  content: string,
+  oldText: string,
+): { start: number; end: number } {
+  if (oldText.length === 0) {
+    throw new Error("replace_text requires non-empty oldText.");
+  }
 
-      if (left.kind === "replace" && right.kind === "replace") {
-        const overlaps = left.startLine <= right.endLine && right.startLine <= left.endLine;
-        if (overlaps) {
-          throwEditConflict(left, right, "overlap on the same original line range");
-        }
-        continue;
+  const matches: number[] = [];
+  let from = 0;
+  while (from <= content.length - oldText.length) {
+    const index = content.indexOf(oldText, from);
+    if (index === -1) {
+      break;
+    }
+    matches.push(index);
+    from = index + 1;
+  }
+
+  for (let index = 1; index < matches.length; index++) {
+    if (matches[index]! - matches[index - 1]! < oldText.length) {
+      throw new Error(
+        "replace_text found overlapping exact matches; re-read and use hashline edits.",
+      );
+    }
+  }
+
+  if (matches.length === 0) {
+    throw new Error("replace_text found no exact unique match in the current file.");
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      "replace_text found multiple exact matches in the current file. Re-read and use hashline edits.",
+    );
+  }
+
+  const start = matches[0]!;
+  return {
+    start,
+    end: start + oldText.length,
+  };
+}
+
+function resolveEditToSpan(
+  edit: HashlineEdit,
+  index: number,
+  content: string,
+  lineIndex: LineIndex,
+  noopEdits: NoopEdit[],
+): ResolvedEditSpan | null {
+  const { fileLines, lineStarts, hasTerminalNewline } = lineIndex;
+
+  switch (edit.op) {
+    case "replace": {
+      const startLine = edit.pos.line;
+      const endLine = edit.end?.line ?? edit.pos.line;
+      const originalLines = fileLines.slice(startLine - 1, endLine);
+      if (
+        originalLines.length === edit.lines.length &&
+        originalLines.every((line, lineIndex) => line === edit.lines[lineIndex])
+      ) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `${edit.pos.line}#${edit.pos.hash}`,
+          currentContent: originalLines.join("\n"),
+        });
+        return null;
       }
+
+      if (edit.lines.length > 0) {
+        return {
+          kind: "replace",
+          index,
+          label: describeEdit(edit),
+          start: lineStarts[startLine - 1]!,
+          end: lineStarts[endLine - 1]! + fileLines[endLine - 1]!.length,
+          replacement: edit.lines.join("\n"),
+        };
+      }
+
+      if (startLine === 1 && endLine === fileLines.length) {
+        return {
+          kind: "replace",
+          index,
+          label: describeEdit(edit),
+          start: 0,
+          end: content.length,
+          replacement: "",
+        };
+      }
+
+      if (endLine < fileLines.length) {
+        return {
+          kind: "replace",
+          index,
+          label: describeEdit(edit),
+          start: lineStarts[startLine - 1]!,
+          end: lineStarts[endLine]!,
+          replacement: "",
+        };
+      }
+
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: Math.max(0, lineStarts[startLine - 1]! - 1),
+        end: lineStarts[endLine - 1]! + fileLines[endLine - 1]!.length,
+        replacement: "",
+      };
+    }
+    case "append": {
+      if (edit.lines.length === 0) {
+        noopEdits.push({
+          editIndex: index,
+          loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "EOF",
+          currentContent: edit.pos ? fileLines[edit.pos.line - 1] ?? "" : "",
+        });
+        return null;
+      }
+
+      const insertedText = edit.lines.join("\n");
+      if (content.length === 0) {
+        return {
+          kind: "insert",
+          index,
+          label: describeEdit(edit),
+          start: 0,
+          end: 0,
+          replacement: insertedText,
+          boundary: computeInsertionBoundary(edit, lineIndex),
+          insertMode: "append-empty-origin",
+        };
+      }
+
+      if (!edit.pos) {
+        return {
+          kind: "insert",
+          index,
+          label: describeEdit(edit),
+          start: content.length,
+          end: content.length,
+          replacement: hasTerminalNewline ? `${insertedText}\n` : `\n${insertedText}`,
+          boundary: computeInsertionBoundary(edit, lineIndex),
+        };
+      }
+
+      const isSentinelAppend = hasTerminalNewline && edit.pos.line === fileLines.length;
+      return {
+        kind: "insert",
+        index,
+        label: describeEdit(edit),
+        start: isSentinelAppend
+          ? content.length
+          : lineStarts[edit.pos.line - 1]! + fileLines[edit.pos.line - 1]!.length,
+        end: isSentinelAppend
+          ? content.length
+          : lineStarts[edit.pos.line - 1]! + fileLines[edit.pos.line - 1]!.length,
+        replacement: isSentinelAppend ? `${insertedText}\n` : `\n${insertedText}`,
+        boundary: computeInsertionBoundary(edit, lineIndex),
+      };
+    }
+    case "prepend": {
+      if (edit.lines.length === 0) {
+        noopEdits.push({
+          editIndex: index,
+          loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "BOF",
+          currentContent: edit.pos ? fileLines[edit.pos.line - 1] ?? "" : "",
+        });
+        return null;
+      }
+
+      const insertedText = edit.lines.join("\n");
+      const start = edit.pos ? lineStarts[edit.pos.line - 1]! : 0;
+      return {
+        kind: "insert",
+        index,
+        label: describeEdit(edit),
+        start,
+        end: start,
+        replacement: content.length === 0 ? insertedText : `${insertedText}\n`,
+        boundary: computeInsertionBoundary(edit, lineIndex),
+        ...(content.length === 0 ? { insertMode: "prepend-empty-origin" as const } : {}),
+      };
+    }
+    case "replace_text": {
+      const match = findExactUniqueTextMatch(content, edit.oldText);
+      if (edit.oldText === edit.newText) {
+        noopEdits.push({
+          editIndex: index,
+          loc: `replace_text \"${previewText(edit.oldText)}\"`,
+          currentContent: edit.oldText,
+        });
+        return null;
+      }
+
+      return {
+        kind: "replace",
+        index,
+        label: describeEdit(edit),
+        start: match.start,
+        end: match.end,
+        replacement: edit.newText,
+      };
+    }
+  }
+}
+
+function assertNoConflictingSpans(spans: ResolvedEditSpan[]): void {
+  for (let leftIndex = 0; leftIndex < spans.length; leftIndex++) {
+    const left = spans[leftIndex]!;
+    for (let rightIndex = leftIndex + 1; rightIndex < spans.length; rightIndex++) {
+      const right = spans[rightIndex]!;
 
       if (left.kind === "insert" && right.kind === "insert") {
         if (left.boundary === right.boundary) {
@@ -519,19 +761,16 @@ function assertNoConflictingEdits(
         continue;
       }
 
-      const [replaceTarget, insertTarget] =
-        left.kind === "replace"
-          ? [left, right as Extract<NormalizedEditTarget, { kind: "insert" }>]
-          : [right as Extract<NormalizedEditTarget, { kind: "replace" }>, left];
-      const insertsInsideReplace =
-        insertTarget.boundary >= replaceTarget.startLine &&
-        // boundary === endLine is intentionally allowed: append-after-endLine
-        // lands on the trailing boundary, not inside the replaced range. That is
-        // only safe because bottom-up application sorts the boundary insert ahead
-        // of the replace anchored to the same original end line; revisit this if
-        // edit ordering semantics change.
-        insertTarget.boundary < replaceTarget.endLine;
-      if (insertsInsideReplace) {
+      if (left.kind === "replace" && right.kind === "replace") {
+        if (left.start < right.end && right.start < left.end) {
+          throwEditConflict(left, right, "overlap on the same original line range");
+        }
+        continue;
+      }
+
+      const replaceSpan = left.kind === "replace" ? left : right;
+      const insertSpan = left.kind === "insert" ? left : right;
+      if (insertSpan.start >= replaceSpan.start && insertSpan.start < replaceSpan.end) {
         throwEditConflict(
           left,
           right,
@@ -557,39 +796,18 @@ export function applyHashlineEdits(
   if (!edits.length) return { content, firstChangedLine: undefined, lastChangedLine: undefined };
 
   const workingEdits = edits.map(cloneHashlineEdit);
-  const fileLines = content.split("\n");
-  const hasTerminalNewline = content.endsWith("\n");
-  const origLines = [...fileLines];
+  const lineIndex = buildLineIndex(content);
   const noopEdits: NoopEdit[] = [];
   const warnings: string[] = [];
 
-  // Track affected ranges in ORIGINAL document coordinates, then convert to
-  // final positions after all edits. This avoids the stale-position bug where
-  // track() records coordinates during bottom-up mutation that later get shifted
-  // by edits above them (e.g. prepend at top shifts a tracked replace downward).
-  const affectedEdits: Array<{
-    fStart: number;
-    newLength: number;
-    originalLength: number;
-  }> = [];
-
-  function trackEdit(
-    fStart: number,
-    newLength: number,
-    originalLength = newLength,
-  ): void {
-    affectedEdits.push({ fStart, newLength, originalLength });
-  }
-
-  // Validate all refs before mutation
   const mismatches: HashMismatch[] = [];
   const retryLines = new Set<number>();
   const acceptedFuzzyRefs = new Set<string>();
   function validate(ref: Anchor): boolean {
-    if (ref.line < 1 || ref.line > fileLines.length) {
-      throw new Error(`Line ${ref.line} does not exist (file has ${fileLines.length} lines)`);
+    if (ref.line < 1 || ref.line > lineIndex.fileLines.length) {
+      throw new Error(`Line ${ref.line} does not exist (file has ${lineIndex.fileLines.length} lines)`);
     }
-    const line = fileLines[ref.line - 1];
+    const line = lineIndex.fileLines[ref.line - 1]!;
     const actual = computeLineHash(ref.line, line);
     if (actual === ref.hash) return true;
     if (ref.textHint !== undefined) {
@@ -610,7 +828,6 @@ export function applyHashlineEdits(
     return false;
   }
 
-  // Pre-validate: collect all hash mismatches before mutating
   for (const edit of workingEdits) {
     throwIfAborted(signal);
     switch (edit.op) {
@@ -630,8 +847,8 @@ export function applyHashlineEdits(
             retryLines.add(edit.pos.line);
           }
           if (!startOk || !endOk) continue;
-        } else {
-          if (!validate(edit.pos)) continue;
+        } else if (!validate(edit.pos)) {
+          continue;
         }
         break;
       }
@@ -653,256 +870,70 @@ export function applyHashlineEdits(
         }
         break;
       }
+      case "replace_text":
+        break;
     }
   }
-  if (mismatches.length)
-    throw new Error(formatMismatchError(mismatches, fileLines, retryLines));
+  if (mismatches.length) {
+    throw new Error(formatMismatchError(mismatches, lineIndex.fileLines, retryLines));
+  }
 
-  // Deduplicate identical edits without mutating caller-owned input.
-  const seenEditKeys = new Map<string, number>();
-  const dedupedEdits: HashlineEdit[] = [];
-  for (const edit of workingEdits) {
+  maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
+
+  const seenSpanKeys = new Set<string>();
+  const resolvedSpans: ResolvedEditSpan[] = [];
+  for (const [index, edit] of workingEdits.entries()) {
     throwIfAborted(signal);
-    let lineKey: string;
-    switch (edit.op) {
-      case "replace":
-        if (!edit.end) {
-          lineKey = `s:${edit.pos.line}`;
-        } else {
-          lineKey = `r:${edit.pos.line}:${edit.end.line}`;
-        }
-        break;
-      case "append":
-        if (edit.pos) {
-          lineKey = `i:${edit.pos.line}`;
-          break;
-        }
-        lineKey = "ieof";
-        break;
-      case "prepend":
-        if (edit.pos) {
-          lineKey = `ib:${edit.pos.line}`;
-          break;
-        }
-        lineKey = "ibef";
-        break;
-    }
-    const dstKey = `${lineKey}:${edit.lines.join("\n")}`;
-    if (seenEditKeys.has(dstKey)) {
+    const span = resolveEditToSpan(edit, index, content, lineIndex, noopEdits);
+    if (!span) {
       continue;
     }
-    seenEditKeys.set(dstKey, dedupedEdits.length);
-    dedupedEdits.push(edit);
+
+    const spanKey = span.kind === "insert"
+      ? `insert:${span.boundary}:${span.replacement}`
+      : `replace:${span.start}:${span.end}:${span.replacement}`;
+    if (seenSpanKeys.has(spanKey)) {
+      continue;
+    }
+    seenSpanKeys.add(spanKey);
+    resolvedSpans.push(span);
   }
 
-  assertNoConflictingEdits(dedupedEdits, fileLines.length, hasTerminalNewline);
-  maybeWarnSuspiciousUnicodeEscapePlaceholder(dedupedEdits, warnings);
+  assertNoConflictingSpans(resolvedSpans);
 
-  // Compute sort key (descending) — bottom-up application
-  const annotated = dedupedEdits.map((edit, idx) => {
-    let sortLine: number;
-    let precedence: number;
-    switch (edit.op) {
-      case "replace":
-        if (!edit.end) {
-          sortLine = edit.pos.line;
-        } else {
-          sortLine = edit.end.line;
-        }
-        precedence = 0;
-        break;
-      case "append":
-        sortLine = edit.pos ? edit.pos.line : fileLines.length + 1;
-        precedence = 1;
-        break;
-      case "prepend":
-        sortLine = edit.pos ? edit.pos.line : 0;
-        precedence = 2;
-        break;
+  const orderedSpans = [...resolvedSpans].sort((left, right) => {
+    if (right.end !== left.end) {
+      return right.end - left.end;
     }
-    return { edit, idx, sortLine, precedence };
+    if (left.kind !== right.kind) {
+      return left.kind === "replace" ? -1 : 1;
+    }
+    if (left.kind === "insert" && right.kind === "insert") {
+      return (right.boundary ?? -1) - (left.boundary ?? -1) || left.index - right.index;
+    }
+    return left.index - right.index;
   });
 
-  annotated.sort(
-    (a, b) =>
-      b.sortLine - a.sortLine || a.precedence - b.precedence || a.idx - b.idx,
-  );
-
-  // Pre-compute delta map for offset lookups during edit application.
-  const deltas: Array<[number, number]> = [];
-  for (const { edit } of annotated) {
-    switch (edit.op) {
-      case "replace": {
-        const count = edit.end
-          ? edit.end.line - edit.pos.line + 1
-          : 1;
-        deltas.push([edit.pos.line - 1, edit.lines.length - count]);
-        break;
-      }
-      case "append": {
-        deltas.push([edit.pos ? edit.pos.line - 1 : origLines.length, edit.lines.length]);
-        break;
-      }
-      case "prepend": {
-        deltas.push([edit.pos ? edit.pos.line - 1 : 0, edit.lines.length]);
-        break;
-      }
-    }
-  }
-  deltas.sort((a, b) => a[0] - b[0]);
-
-  function computeOffset(lineIdx: number): number {
-    let offset = 0;
-    for (const [idx, d] of deltas) {
-      if (idx >= lineIdx) break;
-      offset += d;
-    }
-    return offset;
-  }
-
-  // Apply edits bottom-up
-  for (const { edit, idx } of annotated) {
+  let result = content;
+  for (const span of orderedSpans) {
     throwIfAborted(signal);
-    switch (edit.op) {
-      case "replace": {
-        if (!edit.end) {
-          const origLine = origLines.slice(edit.pos.line - 1, edit.pos.line);
-          const newLines = edit.lines;
-          if (
-            origLine.length === newLines.length &&
-            origLine.every((line, i) => line === newLines[i])
-          ) {
-            noopEdits.push({
-              editIndex: idx,
-              loc: `${edit.pos.line}#${edit.pos.hash}`,
-              currentContent: origLine.join("\n"),
-            });
-            break;
-          }
-          fileLines.splice(edit.pos.line - 1, 1, ...newLines);
-          trackEdit(
-            edit.pos.line + computeOffset(edit.pos.line - 1),
-            newLines.length,
-            newLines.length === 0 ? 1 : newLines.length,
-          );
-        } else {
-          const count = edit.end.line - edit.pos.line + 1;
-          const orig = origLines.slice(
-            edit.pos.line - 1,
-            edit.pos.line - 1 + count,
-          );
-
-          // Noop check on range replaces
-          if (
-            orig.length === edit.lines.length &&
-            orig.every((line, i) => line === edit.lines[i])
-          ) {
-            noopEdits.push({
-              editIndex: idx,
-              loc: `${edit.pos.line}#${edit.pos.hash}`,
-              currentContent: orig.join("\n"),
-            });
-            break;
-          }
-
-          const newLines = [...edit.lines];
-          fileLines.splice(edit.pos.line - 1, count, ...newLines);
-          trackEdit(
-            edit.pos.line + computeOffset(edit.pos.line - 1),
-            newLines.length,
-            newLines.length === 0 ? count : newLines.length,
-          );
-        }
-        break;
-      }
-      case "append": {
-        const inserted = edit.lines;
-        if (inserted.length === 0) {
-          noopEdits.push({
-            editIndex: idx,
-            loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "EOF",
-            currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
-          });
-          break;
-        }
-        if (edit.pos) {
-          const isSentinelAppend = hasTerminalNewline && edit.pos.line === origLines.length;
-          const insertAt = isSentinelAppend
-            ? fileLines.length - 1
-            : edit.pos.line;
-          fileLines.splice(insertAt, 0, ...inserted);
-          // Use original coordinates + offset to get final-document line numbers,
-          // accounting for edits applied later (e.g. prepends that shift content down).
-          if (isSentinelAppend) {
-            trackEdit(edit.pos.line + computeOffset(edit.pos.line - 1), inserted.length);
-          } else {
-            trackEdit(edit.pos.line + 1 + computeOffset(edit.pos.line - 1), inserted.length);
-          }
-        } else {
-          if (fileLines.length === 1 && fileLines[0] === "") {
-            fileLines.splice(0, 1, ...inserted);
-            trackEdit(1 + computeOffset(origLines.length), inserted.length);
-          } else {
-            const insertAt = hasTerminalNewline ? fileLines.length - 1 : fileLines.length;
-            fileLines.splice(insertAt, 0, ...inserted);
-            // Use original coordinates + offset to get final-document line numbers.
-            if (hasTerminalNewline) {
-              trackEdit(origLines.length + computeOffset(origLines.length - 1), inserted.length);
-            } else {
-              trackEdit(origLines.length + 1 + computeOffset(origLines.length), inserted.length);
-            }
-          }
-        }
-        break;
-      }
-      case "prepend": {
-        const inserted = edit.lines;
-        if (inserted.length === 0) {
-          noopEdits.push({
-            editIndex: idx,
-            loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "BOF",
-            currentContent: edit.pos ? origLines[edit.pos.line - 1] : "",
-          });
-          break;
-        }
-        if (edit.pos) {
-          fileLines.splice(edit.pos.line - 1, 0, ...inserted);
-          trackEdit(edit.pos.line + computeOffset(edit.pos.line - 1), inserted.length);
-        } else if (fileLines.length === 1 && fileLines[0] === "") {
-          fileLines.splice(0, 1, ...inserted);
-          trackEdit(1, inserted.length);
-        } else {
-          fileLines.splice(0, 0, ...inserted);
-          trackEdit(1, inserted.length);
-        }
-        break;
-      }
-    }
+    const replacement = span.insertMode === "append-empty-origin"
+      ? result.length === 0
+        ? span.replacement
+        : `\n${span.replacement}`
+      : span.insertMode === "prepend-empty-origin"
+        ? result.length === 0
+          ? span.replacement
+          : `${span.replacement}\n`
+        : span.replacement;
+    result = result.slice(0, span.start) + replacement + result.slice(span.end);
   }
 
-  // Convert tracked edits (which record final start line and new line count)
-  // into firstChanged / lastChanged for the return value.
-  let firstChanged: number | undefined;
-  let lastChanged: number | undefined;
-  if (affectedEdits.length > 0) {
-    let minFinal = Infinity;
-    let maxFinal = -Infinity;
-    for (const { fStart, newLength, originalLength } of affectedEdits) {
-      const affectedLength = newLength > 0 ? newLength : originalLength;
-      const fEnd = fStart + affectedLength - 1;
-      if (fStart < minFinal) minFinal = fStart;
-      if (fEnd > maxFinal) maxFinal = fEnd;
-    }
-    if (minFinal !== Infinity) {
-      firstChanged = minFinal;
-      lastChanged = maxFinal;
-    }
-  }
-
+  const changedRange = computeLegacyEditLineRange(content, result);
   return {
-    content: fileLines.join("\n"),
-    firstChangedLine: firstChanged,
-    lastChangedLine: lastChanged,
+    content: result,
+    firstChangedLine: changedRange?.firstChangedLine,
+    lastChangedLine: changedRange?.lastChangedLine,
     ...(warnings.length ? { warnings } : {}),
     ...(noopEdits.length ? { noopEdits } : {}),
   };
@@ -983,6 +1014,28 @@ export function computeLegacyEditLineRange(
 ): { firstChangedLine: number; lastChangedLine: number } | null {
   if (original === result) return null;
 
+  function countVisibleLines(text: string): number {
+    if (text.length === 0) {
+      return 0;
+    }
+    const lines = text.split("\n");
+    return text.endsWith("\n") ? lines.length - 1 : lines.length;
+  }
+
+  if (original.length === 0) {
+    return {
+      firstChangedLine: 1,
+      lastChangedLine: countVisibleLines(result),
+    };
+  }
+
+  if (result.startsWith(original) && original.endsWith("\n")) {
+    return {
+      firstChangedLine: countVisibleLines(original) + 1,
+      lastChangedLine: countVisibleLines(result),
+    };
+  }
+
   let firstDiff = 0;
   const minLen = Math.min(original.length, result.length);
   while (firstDiff < minLen && original[firstDiff] === result[firstDiff]) {
@@ -1001,7 +1054,6 @@ export function computeLegacyEditLineRange(
     lastRes--;
   }
 
-  // Map the last-changed character index in the result to a 1-based line number.
   function indexToLine(charIdx: number, text: string): number {
     let line = 1;
     for (let i = 0; i < charIdx && i < text.length; i++) {
@@ -1013,13 +1065,8 @@ export function computeLegacyEditLineRange(
   const firstChangedLine = indexToLine(firstDiff + 1, result);
   let lastChangedLine: number;
   if (lastRes < firstDiff) {
-    // Deletion: suffix match backtracked into the unchanged prefix region.
-    // The changed span extends to the last line of the result document.
-    const resultLines = result.split("\n");
-    lastChangedLine = result.endsWith("\n") ? resultLines.length - 1 : resultLines.length;
+    lastChangedLine = result.length === 0 ? 1 : countVisibleLines(result);
   } else if (firstDiff === 0 && original.length > 0 && result.endsWith(original)) {
-    // Pure prepend: original content is intact at the end, only new lines were
-    // inserted before it. The changed span covers only the prepended lines.
     lastChangedLine = firstChangedLine;
   } else {
     lastChangedLine = indexToLine(lastRes + 1, result);

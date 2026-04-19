@@ -21,11 +21,12 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 </payload>
 
 <operations>
-Each entry has an `op` and a `lines` array.
+Each entry has an `op`.
 
 - `replace` — replaces the line at `pos`, or all lines from `pos` through `end` inclusive, with the contents of `lines`. `pos` is required; `end` is optional.
 - `append` — inserts `lines` after `pos`. Omit `pos` to insert at end of file.
 - `prepend` — inserts `lines` before `pos`. Omit `pos` to insert at start of file.
+- `replace_text` — replaces one exact unique `oldText` match with `newText`. Use this when you do not have anchors yet, or for exact string substitutions that can safely coexist with anchored edits in the same request.
 
 `end` is only valid with `replace`.
 
@@ -58,15 +59,22 @@ Insert after a line:
 { "op": "append", "pos": "50#NK", "lines": ["", "## New Section"] }
 ```
 
-Multiple edits in one call — all anchors refer to the same pre-edit snapshot:
+Exact unique text replacement:
+
+```json
+{ "op": "replace_text", "oldText": "before", "newText": "after" }
+```
+
+Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and `replace_text` matches against that same snapshot:
 
 ```json
 {
   "path": "README.md",
   "edits": [
-    { "op": "replace", "pos": "33#YW", "lines": ["updated line"] },
-    { "op": "append",  "pos": "50#NK", "lines": ["", "## New Section"] },
-    { "op": "prepend",               "lines": ["// header"] }
+    { "op": "replace",      "pos": "33#YW", "lines": ["updated line"] },
+    { "op": "replace_text", "oldText": "draft title", "newText": "final title" },
+    { "op": "append",       "pos": "50#NK", "lines": ["", "## New Section"] },
+    { "op": "prepend",                      "lines": ["// header"] }
   ]
 }
 ```
@@ -76,6 +84,7 @@ Multiple edits in one call — all anchors refer to the same pre-edit snapshot:
 - Copy `LINE#HASH` anchors exactly from `read` output — do not guess or construct them.
 - Copy indentation exactly from `read` output.
 - `lines` must be literal file content. Do not include `LINE#HASH:` prefixes or diff markers.
+- `replace_text` is exact-only: it must match exactly once in the current file. If it matches zero or multiple times, re-read and use anchors instead.
 - Do not echo the line immediately before or after the replaced range into `lines` — include only the new content for the targeted lines.
 - Each edit in a call targets anchors from the same pre-edit snapshot. Do not use anchors from the result of one edit as input to another edit in the same call.
 - Do not emit overlapping or adjacent edits — merge nearby changes into a single entry.
