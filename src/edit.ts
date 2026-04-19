@@ -29,6 +29,7 @@ import {
 } from "./hashline";
 import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
+import { formatHashlineReadPreview } from "./read";
 import { throwIfAborted } from "./runtime";
 import { getCachedSnapshot, getFileSnapshot } from "./snapshot";
 
@@ -56,6 +57,9 @@ export const hashlineEditToolSchema = Type.Object(
   {
     path: Type.String({ description: "path" }),
     snapshotId: Type.Optional(Type.String({ description: "snapshot fingerprint from read" })),
+    returnMode: Type.Optional(
+      StringEnum(["changed", "full"] as const, { description: 'response mode: "changed" or "full"' }),
+    ),
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     ),
@@ -66,6 +70,7 @@ export const hashlineEditToolSchema = Type.Object(
 type EditRequestParams = {
   path: string;
   snapshotId?: string;
+  returnMode?: "changed" | "full";
   edits?: HashlineToolEdit[];
   oldText?: string;
   newText?: string;
@@ -86,6 +91,7 @@ type HashlineEditToolDetails = {
   compatibility?: CompatibilityDetails;
   snapshotId?: string;
   classification?: "noop";
+  nextOffset?: number;
 };
 
 const EDIT_DESC = readFileSync(
@@ -101,6 +107,7 @@ const EDIT_PROMPT_SNIPPET = readFileSync(
 const ROOT_KEYS = new Set([
   "path",
   "snapshotId",
+  "returnMode",
   "edits",
   "oldText",
   "newText",
@@ -227,6 +234,12 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
 
   if (hasOwn(request, "edits") && !Array.isArray(request.edits)) {
     throw new Error('Edit request requires an "edits" array when provided.');
+  }
+
+  if (hasOwn(request, "returnMode")) {
+    if (request.returnMode !== "changed" && request.returnMode !== "full") {
+      throw new Error('Edit request field "returnMode" must be "changed" or "full" when provided.');
+    }
   }
 
   if (hasOwn(request, "snapshotId") && typeof request.snapshotId !== "string") {
@@ -651,6 +664,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
       const normalizedParams = params as EditRequestParams;
       const path = normalizedParams.path;
       const absolutePath = resolveToCwd(path, ctx.cwd);
+      const returnMode = normalizedParams.returnMode ?? "changed";
       const toolEdits = Array.isArray(normalizedParams.edits)
         ? (normalizedParams.edits as HashlineToolEdit[])
         : [];
@@ -761,11 +775,16 @@ export function registerEditTool(pi: ExtensionAPI): void {
                 )
                 .join("\n")
             : "The edits produced identical content.";
+          const noopFullPreview = returnMode === "full"
+            ? formatHashlineReadPreview(originalNormalized, { offset: 1 })
+            : undefined;
           return {
             content: [
               {
                 type: "text",
-                text: `No changes made to ${path}\nClassification: noop\n${noopDetails}` ,
+                text: returnMode === "full"
+                  ? `No changes made to ${path}\nClassification: noop\nSnapshotId: ${snapshotId}\n\nFull content:\n${noopFullPreview!.text}`
+                  : `No changes made to ${path}\nClassification: noop\n${noopDetails}`,
               },
             ],
             details: {
@@ -773,6 +792,9 @@ export function registerEditTool(pi: ExtensionAPI): void {
               firstChangedLine: undefined,
               snapshotId,
               classification: "noop" as const,
+              ...(noopFullPreview?.nextOffset !== undefined
+                ? { nextOffset: noopFullPreview.nextOffset }
+                : {}),
             },
           };
         }
@@ -785,6 +807,28 @@ export function registerEditTool(pi: ExtensionAPI): void {
         const updatedSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
 
         const diffResult = generateDiffString(originalNormalized, result);
+        if (returnMode === "full") {
+          const fullPreview = formatHashlineReadPreview(result, { offset: 1 });
+          const warningsBlock = warnings?.length
+            ? `\n\nWarnings:\n${warnings.join("\n")}`
+            : "";
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Updated ${path}\nSnapshotId: ${updatedSnapshotId}${warningsBlock}\n\nFull content:\n${fullPreview.text}`,
+              },
+            ],
+            details: {
+              diff: diffResult.diff,
+              firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
+              snapshotId: updatedSnapshotId,
+              ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
+              ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
+            },
+          };
+        }
+
         const preview = buildCompactHashlineDiffPreview(diffResult.diff);
         const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
         const snapshotLine = `SnapshotId: ${updatedSnapshotId}`;

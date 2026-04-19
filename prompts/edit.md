@@ -11,6 +11,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 {
   "path": "src/main.ts",
   "snapshotId": "v1|/abs/path|...",
+  "returnMode": "changed",
   "edits": [
     { "op": "replace", "pos": "12#MQ", "lines": ["..."] }
   ]
@@ -19,6 +20,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 
 - `path` — target file path.
 - `snapshotId` — optional fingerprint returned by `read`; when provided, `edit` rejects stale file state before applying changes.
+- `returnMode` — optional response mode. `changed` (default) returns diff + updated anchors; `full` returns the post-edit file content preview and `nextOffset` when truncated.
 - `edits` — array of edit operations.
 </payload>
 
@@ -97,7 +99,8 @@ Mixed edits in one call — all anchors refer to the same pre-edit snapshot, and
 
 <after-edit>
 A successful edit returns:
-- `Diff preview` — changed lines with `+`/`-` markers.
+- `Diff preview` — in `returnMode="changed"`, changed lines with `+`/`-` markers.
+- `Full content` — in `returnMode="full"`, the post-edit file content preview. If it exceeds the budget, the response includes `nextOffset` and a continuation hint using `offset=...`.
 - `SnapshotId` — the fresh post-edit fingerprint for subsequent edits on the same file.
 - `Updated anchors` — fresh `LINE#HASH` references for the changed region, usable in the next call without re-reading. For edits outside that region, use `read` first.
 </after-edit>
@@ -105,6 +108,6 @@ A successful edit returns:
 <errors>
 - **Stale anchor**: the file has changed since your last `read`. The error shows the current content with `>>>` marking the lines you need. Copy those `>>> LINE#HASH` values and retry. For a range replace, update both `pos` and `end`.
 - **Stale snapshotId**: the file changed since your last `read`. Re-run `read` and retry with the latest `snapshotId`.
-- **Identical content**: your replacement matches what the file already contains. Re-read to confirm the current state, then supply different content.
+- **Identical content**: unchanged edits return `classification: "noop"` instead of throwing. Re-read only if you expected a real change.
 </errors>
 </errors>

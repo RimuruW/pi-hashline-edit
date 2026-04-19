@@ -67,7 +67,7 @@ function getPreviewLines(text: string): string[] {
 export function formatHashlineReadPreview(
   text: string,
   options: { offset?: number; limit?: number },
-): { text: string; truncation?: TruncationResult } {
+): { text: string; truncation?: TruncationResult; nextOffset?: number } {
   const allLines = getPreviewLines(text);
   const totalLines = allLines.length;
   const startLine = normalizePositiveInteger(options.offset, "offset") ?? 1;
@@ -110,21 +110,24 @@ export function formatHashlineReadPreview(
   }
 
   let preview = truncation.content;
+  let nextOffset: number | undefined;
   if (truncation.truncated) {
     const endLineDisplay = startLine + truncation.outputLines - 1;
-    const nextOffset = endLineDisplay + 1;
+    nextOffset = endLineDisplay + 1;
     if (truncation.truncatedBy === "lines") {
       preview += `\n\n[Showing lines ${startLine}-${endLineDisplay} of ${totalLines}. Use offset=${nextOffset} to continue.]`;
     } else {
       preview += `\n\n[Showing lines ${startLine}-${endLineDisplay} of ${totalLines} (${formatSize(truncation.maxBytes)} limit). Use offset=${nextOffset} to continue.]`;
     }
   } else if (endIdx < totalLines) {
-    preview += `\n\n[Showing lines ${startLine}-${endIdx} of ${totalLines}. Use offset=${endIdx + 1} to continue.]`;
+    nextOffset = endIdx + 1;
+    preview += `\n\n[Showing lines ${startLine}-${endIdx} of ${totalLines}. Use offset=${nextOffset} to continue.]`;
   }
 
   return {
     text: preview,
     truncation: truncation.truncated ? truncation : undefined,
+    ...(nextOffset !== undefined ? { nextOffset } : {}),
   };
 }
 
@@ -198,7 +201,11 @@ export function registerReadTool(pi: ExtensionAPI): void {
 
       return {
         content: [{ type: "text", text: `${preview.text}\n\n[snapshotId: ${snapshot.snapshotId}]` }],
-        details: { truncation: preview.truncation, snapshotId: snapshot.snapshotId },
+        details: {
+          truncation: preview.truncation,
+          snapshotId: snapshot.snapshotId,
+          ...(preview.nextOffset !== undefined ? { nextOffset: preview.nextOffset } : {}),
+        },
       };
     },
   });
