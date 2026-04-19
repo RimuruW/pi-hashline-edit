@@ -337,6 +337,63 @@ function formatPreviewDiff(
   return shown.join("\n");
 }
 
+function formatRenderedEditResult(
+  result: { content?: Array<{ type: string; text?: string }> },
+  options: { expanded: boolean; isError: boolean },
+  theme: { fg: (token: string, text: string) => string },
+): string | undefined {
+  const textContent = result.content?.find(
+    (entry): entry is { type: "text"; text: string } =>
+      entry.type === "text" && typeof entry.text === "string",
+  );
+  if (!textContent) {
+    return undefined;
+  }
+
+  if (options.isError) {
+    return `\n${theme.fg("error", textContent.text)}`;
+  }
+
+  const lines = textContent.text.split("\n");
+  const maxLines = options.expanded ? 60 : 20;
+  const shown = lines.slice(0, maxLines).map((line) => {
+    if (line.length === 0) {
+      return line;
+    }
+    if (line.startsWith("Updated ")) {
+      return theme.fg("success", line);
+    }
+    if (line === "Warnings:") {
+      return theme.fg("warning", line);
+    }
+    if (line === "Diff preview:" || line.startsWith("Changes: ")) {
+      return theme.fg("muted", line);
+    }
+    if (line.startsWith("--- Updated anchors")) {
+      return theme.fg("accent", line);
+    }
+    if (line.startsWith("+")) {
+      return theme.fg("success", line);
+    }
+    if (line.startsWith("-")) {
+      return theme.fg("error", line);
+    }
+    if (line.startsWith("... ")) {
+      return theme.fg("muted", line);
+    }
+    if (/^\d+#/.test(line)) {
+      return theme.fg("toolOutput", line);
+    }
+    return theme.fg("dim", line);
+  });
+
+  if (lines.length > maxLines) {
+    shown.push(theme.fg("muted", `... ${lines.length - maxLines} more result lines`));
+  }
+
+  return `\n${shown.join("\n")}`;
+}
+
 function formatEditCall(
   args: EditRequestParams | undefined,
   state: EditRenderState,
@@ -491,6 +548,23 @@ export function registerEditTool(pi: ExtensionAPI): void {
           context.expanded,
           theme,
         ),
+      );
+      return text;
+    },
+
+    renderResult(result, { expanded, isPartial }, theme, context) {
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      if (isPartial) {
+        text.setText(theme.fg("warning", "Editing..."));
+        return text;
+      }
+
+      text.setText(
+        formatRenderedEditResult(
+          result as { content?: Array<{ type: string; text?: string }> },
+          { expanded, isError: Boolean(context.isError) },
+          theme,
+        ) ?? "",
       );
       return text;
     },

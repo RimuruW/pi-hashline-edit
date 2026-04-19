@@ -6,6 +6,8 @@ import {
   prepareEditArguments,
   registerEditTool,
 } from "../../src/edit";
+import { computeLineHash } from "../../src/hashline";
+import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 describe("assertEditRequest", () => {
   it("rejects unknown or unsupported root fields", () => {
@@ -190,5 +192,53 @@ describe("registerEditTool", () => {
       oldText: "before",
       newText: "after",
     }));
+  });
+
+  it("registers a custom renderResult that preserves hashline diff preview after execution", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      registerEditTool(pi);
+      const editTool = getTool("edit");
+      const editArgs = {
+        path: "sample.txt",
+        edits: [
+          {
+            op: "replace",
+            pos: `2#${computeLineHash(2, "bbb")}:bbb`,
+            lines: ["BBB"],
+          },
+        ],
+      };
+
+      const result = await editTool.execute(
+        "e1",
+        editArgs,
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(typeof editTool.renderResult).toBe("function");
+
+      const component = editTool.renderResult(
+        result,
+        { expanded: false, isPartial: false },
+        {
+          bold: (text: string) => text,
+          fg: (_token: string, text: string) => text,
+        },
+        {
+          args: editArgs,
+          isError: false,
+          lastComponent: undefined,
+        } as any,
+      ) as { render: (width: number) => string[] };
+
+      const rendered = component.render(200).join("\n");
+
+      expect(rendered).toContain("Updated sample.txt");
+      expect(rendered).toContain("Diff preview:");
+      expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
+    });
   });
 });
