@@ -850,6 +850,19 @@ export function applyHashlineEdits(
         } else if (!validate(edit.pos)) {
           continue;
         }
+        const endLine = edit.end?.line ?? edit.pos.line;
+        const nextLine = lineIndex.fileLines[endLine];
+        const replacementLastLine = edit.lines.at(-1)?.trim();
+        if (
+          nextLine !== undefined &&
+          replacementLastLine &&
+          RE_SIGNIFICANT.test(replacementLastLine) &&
+          replacementLastLine === nextLine.trim()
+        ) {
+          warnings.push(
+            `Potential boundary duplication after ${describeEdit(edit)}: the replacement ends with a line that matches the next surviving line after trim.`,
+          );
+        }
         break;
       }
       case "append": {

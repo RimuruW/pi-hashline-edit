@@ -85,6 +85,7 @@ type HashlineEditToolDetails = {
   firstChangedLine?: number;
   compatibility?: CompatibilityDetails;
   snapshotId?: string;
+  classification?: "noop";
 };
 
 const EDIT_DESC = readFileSync(
@@ -752,20 +753,28 @@ export function registerEditTool(pi: ExtensionAPI): void {
         }
 
         if (originalNormalized === result) {
-          let diagnostic = `No changes made to ${path}. The edits produced identical content.`;
-          if (noopEdits?.length) {
-            diagnostic +=
-              "\n" +
-              noopEdits
+          const noopDetails = noopEdits?.length
+            ? noopEdits
                 .map(
                   (edit) =>
                     `Edit ${edit.editIndex}: replacement for ${edit.loc} is identical to current content:\n  ${edit.loc}: ${edit.currentContent}`,
                 )
-                .join("\n");
-          }
-          diagnostic +=
-            "\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
-          throw new Error(diagnostic);
+                .join("\n")
+            : "The edits produced identical content.";
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No changes made to ${path}\nClassification: noop\n${noopDetails}` ,
+              },
+            ],
+            details: {
+              diff: "",
+              firstChangedLine: undefined,
+              snapshotId,
+              classification: "noop" as const,
+            },
+          };
         }
 
         throwIfAborted(signal);
