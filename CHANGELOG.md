@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.5.4] - 2026-04-19
+
+### Fixed
+
+- Preserve rendered diff previews when the edit tool returns results.
+- Preserve `@` signs and Unicode spaces when normalizing relative paths.
+- Remove edit-application autocorrection heuristics to keep strict hashline semantics.
+- Tighten UTF-8 classification for full-window reads while tolerating incomplete truncated input.
+- Prevent unbounded `_hasherCache` memory growth.
+
+### Changed
+
+- Share file reads between file-kind detection and the `read`/`edit` tools to reduce duplicate I/O.
+
+### Performance
+
+- Cache the XXH32 hasher instance in hashline processing.
+
+### Documentation
+
+- Sync `README.md`, `AGENTS.md`, and prompts with current tool behavior.
+- Fix broken links in `README.md`.
+
+### Tests
+
+- Add coverage for stale-position compound edits, EACCES/EPERM paths, line-ending/BOM helpers, and Windows-specific permission guards.
+
 ## [0.5.3] - 2026-04-06
 
 ### Documentation
