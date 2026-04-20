@@ -18,7 +18,7 @@ import {
   applyExactUniqueLegacyReplace,
   extractLegacyTopLevelReplace,
 } from "./edit-compat";
-import { writeFileAtomically } from "./fs-write";
+import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
 import {
   applyHashlineEdits,
   computeAffectedLineRange,
@@ -1015,7 +1015,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
         };
       }
 
-      return withFileMutationQueue(absolutePath, async () => {
+      const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
+      return withFileMutationQueue(mutationTargetPath, async () => {
         throwIfAborted(signal);
         try {
           await fsAccess(absolutePath, constants.R_OK | constants.W_OK);

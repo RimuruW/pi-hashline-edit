@@ -22,12 +22,13 @@ pi install /path/to/pi-hashline-edit
 
 ### `read` — tagged line output
 
-Text files are returned with a `LINE#HASH:` prefix on every line:
-
+Text files are returned with a `LINE#HASH:` prefix on every line and include a `snapshotId` footer/details payload for the edit loop:
 ```text
 10#VR:function hello() {
 11#KT:  console.log("world");
 12#BH:}
+
+[snapshotId: v1|/abs/path|...]
 ```
 
 - `LINE` — 1-indexed line number.
@@ -37,7 +38,7 @@ Optional parameters:
 - `offset` — start reading from this line number (1-indexed).
 - `limit` — maximum number of lines to return.
 
-Images (JPEG, PNG, GIF, WebP) are passed through as attachments. Binary and directory paths are rejected with a descriptive error. Empty files return an advisory instead of a synthetic anchor.
+Images (JPEG, PNG, GIF, WebP) are passed through as attachments and do not participate in the hashline/snapshot protocol. Binary and directory paths are rejected with a descriptive error. Empty files return an advisory instead of a synthetic anchor.
 
 ### `edit` — hash-anchored modifications
 
@@ -75,7 +76,7 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 - **Hidden legacy compatibility.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the tool attempts an exact unique match. Usage is surfaced to the interactive UI so the operator can see that the model isn't using hashline mode.
 - **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place. Hard-linked files are written atomically as well; this breaks the hard link, leaving the other names pointing to the original content.
 - **Display prefix stripping.** If the model accidentally pastes `LINE#HASH:` prefixes or diff `+`/`-` markers into replacement content, they are detected and stripped automatically.
-- **Per-file mutation queue.** Edits run inside Pi's `withFileMutationQueue()`, preventing lost updates when multiple tools mutate the same file concurrently in one turn.
+- **Per-file mutation queue.** Edits queue by the canonical write target, so concurrent edits through different symlink paths still serialize onto the same underlying file.
 
 ## Hashing
 

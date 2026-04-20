@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { readFile, writeFile } from "fs/promises";
+import { readFile, symlink, writeFile } from "fs/promises";
 import register from "../../index";
 import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
@@ -153,6 +153,47 @@ describe("snapshotId protocol", () => {
       expect(result.details?.classification).toBe("noop");
       expect(result.details?.snapshotId).toEqual(expect.any(String));
       expect(result.details?.snapshotId).not.toBe(oldSnapshotId);
+    });
+  });
+
+  it("accepts a snapshotId across symlink aliases to the same file", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
+      await symlink("sample.txt", `${cwd}/linked-sample.txt`);
+
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+      const editTool = getTool("edit");
+
+      const readResult = await readTool.execute(
+        "r1",
+        { path: "linked-sample.txt" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+      const snapshotId = readResult.details?.snapshotId;
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          snapshotId,
+          edits: [
+            {
+              op: "replace",
+              pos: `2#${computeLineHash(2, "beta")}`,
+              lines: ["BETA"],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(getText(result)).toContain("Updated sample.txt");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\n");
     });
   });
 

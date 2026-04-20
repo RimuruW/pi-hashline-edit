@@ -1,4 +1,5 @@
 import { stat } from "fs/promises";
+import { resolveMutationTargetPath } from "./fs-write";
 
 export type SnapshotInfo = {
   snapshotId: string;
@@ -8,21 +9,23 @@ export type SnapshotInfo = {
 
 const snapshotCache = new Map<string, SnapshotInfo>();
 
-function formatSnapshotId(absolutePath: string, info: { mtimeMs: number; size: number }): string {
-  return `v1|${absolutePath}|${info.mtimeMs}|${info.size}`;
+function formatSnapshotId(canonicalPath: string, info: { mtimeMs: number; size: number }): string {
+  return `v1|${canonicalPath}|${info.mtimeMs}|${info.size}`;
 }
 
 export async function getFileSnapshot(absolutePath: string): Promise<SnapshotInfo> {
-  const stats = await stat(absolutePath);
+  const canonicalPath = await resolveMutationTargetPath(absolutePath);
+  const stats = await stat(canonicalPath);
   const snapshot: SnapshotInfo = {
-    snapshotId: formatSnapshotId(absolutePath, stats),
+    snapshotId: formatSnapshotId(canonicalPath, stats),
     mtimeMs: stats.mtimeMs,
     size: stats.size,
   };
-  snapshotCache.set(absolutePath, snapshot);
+  snapshotCache.set(canonicalPath, snapshot);
   return snapshot;
 }
 
-export function getCachedSnapshot(absolutePath: string): SnapshotInfo | undefined {
-  return snapshotCache.get(absolutePath);
+export async function getCachedSnapshot(absolutePath: string): Promise<SnapshotInfo | undefined> {
+  const canonicalPath = await resolveMutationTargetPath(absolutePath);
+  return snapshotCache.get(canonicalPath);
 }

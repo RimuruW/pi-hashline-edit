@@ -1,39 +1,56 @@
 import { randomUUID } from "crypto";
 import { chmod, lstat, mkdir, readlink, rename, stat, writeFile } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { dirname, join, parse, resolve, sep } from "path";
 
-async function resolveAtomicWritePath(path: string): Promise<string> {
-  let currentPath = path;
-  const visited = new Set<string>();
+export async function resolveMutationTargetPath(path: string): Promise<string> {
+  const absolutePath = resolve(path);
+  const { root } = parse(absolutePath);
+  const parts = absolutePath.slice(root.length).split(sep).filter((part) => part.length > 0);
+  const visitedSymlinks = new Set<string>();
 
-  while (true) {
-    if (visited.has(currentPath)) {
-      const error = new Error(`Too many symbolic links while resolving ${path}`) as NodeJS.ErrnoException;
-      error.code = "ELOOP";
-      throw error;
+  async function resolveFromParts(currentPath: string, remainingParts: string[]): Promise<string> {
+    if (remainingParts.length === 0) {
+      return currentPath;
     }
-    visited.add(currentPath);
+
+    const [nextPart, ...tail] = remainingParts;
+    const candidatePath = join(currentPath, nextPart);
 
     try {
-      if (!(await lstat(currentPath)).isSymbolicLink()) {
-        return currentPath;
+      const candidateStats = await lstat(candidatePath);
+      if (!candidateStats.isSymbolicLink()) {
+        return resolveFromParts(candidatePath, tail);
       }
+
+      if (visitedSymlinks.has(candidatePath)) {
+        const error = new Error(`Too many symbolic links while resolving ${path}`) as NodeJS.ErrnoException;
+        error.code = "ELOOP";
+        throw error;
+      }
+      visitedSymlinks.add(candidatePath);
+
+      const linkTargetPath = resolve(dirname(candidatePath), await readlink(candidatePath));
+      const targetParts = linkTargetPath
+        .slice(parse(linkTargetPath).root.length)
+        .split(sep)
+        .filter((part) => part.length > 0);
+      return resolveFromParts(parse(linkTargetPath).root, [...targetParts, ...tail]);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-        return currentPath;
+        return join(candidatePath, ...tail);
       }
       throw error;
     }
-
-    currentPath = resolve(dirname(currentPath), await readlink(currentPath));
   }
+
+  return resolveFromParts(root, parts);
 }
 
 export async function writeFileAtomically(
   path: string,
   content: string,
 ): Promise<void> {
-  const targetPath = await resolveAtomicWritePath(path);
+  const targetPath = await resolveMutationTargetPath(path);
 
   let existingStats: Awaited<ReturnType<typeof stat>> | null = null;
   try {
