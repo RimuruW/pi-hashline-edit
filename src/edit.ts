@@ -7,7 +7,6 @@ import { constants } from "fs";
 import { readFileSync } from "fs";
 import { access as fsAccess } from "fs/promises";
 import {
-  buildCompactHashlineDiffPreview,
   detectLineEnding,
   generateDiffString,
   normalizeToLF,
@@ -21,9 +20,7 @@ import {
 import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
 import {
   applyHashlineEdits,
-  computeAffectedLineRange,
   computeLegacyEditLineRange,
-  formatHashlineRegion,
   resolveEditAnchors,
   type HashlineToolEdit,
 } from "./hashline";
@@ -32,6 +29,14 @@ import { resolveToCwd } from "./path-utils";
 import { formatHashlineReadPreview } from "./read";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
+import {
+  buildChangedResponse,
+  buildFullResponse,
+  buildNoopResponse,
+  buildRangesResponse,
+  type CompatibilityDetails as ResponseCompatibilityDetails,
+  type ReturnMode,
+} from "./edit-response";
 
 const hashlineEditLinesSchema = Type.Union([
   Type.Array(Type.String(), { description: "content (preferred format)" }),
@@ -113,6 +118,16 @@ type CompatibilityDetails = {
   fuzzyMatch?: true;
 };
 
+type EditMetrics = {
+  edits_attempted: number;
+  edits_noop: number;
+  warnings: number;
+  return_mode: "changed" | "full" | "ranges";
+  classification: "applied" | "noop";
+  changed_lines?: { first: number; last: number };
+  legacy_replace?: true;
+};
+
 type HashlineEditToolDetails = {
   diff: string;
   firstChangedLine?: number;
@@ -128,6 +143,11 @@ type HashlineEditToolDetails = {
   fullContent?: FullContentPreview;
   returnedRanges?: ReturnedRangePreview[];
   structureOutline?: string[];
+  /**
+   * Phase 2 C — opt-in observability surface for hosts. Never echoed in text.
+   * Hosts can use it for adoption/regression dashboards.
+   */
+  metrics?: EditMetrics;
 };
 
 const EDIT_DESC = readFileSync(
@@ -1012,65 +1032,26 @@ export function registerEditTool(pi: ExtensionAPI): void {
           lastChangedLine = legacyRange?.lastChangedLine;
         }
 
+        const editsAttempted = toolEdits.length > 0 ? toolEdits.length : 1;
+        const legacyReplace = toolEdits.length === 0;
+
         if (originalNormalized === result) {
-          const noopDetails = noopEdits?.length
-            ? noopEdits
-                .map(
-                  (edit) =>
-                    `Edit ${edit.editIndex}: replacement for ${edit.loc} is identical to current content:\n  ${edit.loc}: ${edit.currentContent}`,
-                )
-                .join("\n")
-            : "The edits produced identical content.";
-          const noopFullPreview = returnMode === "full"
-            ? formatHashlineReadPreview(originalNormalized, { offset: 1 })
-            : undefined;
-          const noopRangePreviews = returnMode === "ranges"
-            ? formatRequestedRangePreviews(originalNormalized, requestedReturnRanges!)
-            : undefined;
-          const noopOutline = returnMode === "full"
-            ? buildStructureOutline([{ previewText: noopFullPreview!.text }])
-            : returnMode === "ranges"
-              ? buildStructureOutline(
-                  noopRangePreviews!.returnedRanges.map((range, index) => ({
-                    label: `Range ${index + 1} (lines ${range.start}-${range.end})`,
-                    previewText: range.text,
-                  })),
-                )
-              : undefined;
           const noopSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
-          return {
-            content: [
-              {
-                type: "text",
-                text: returnMode === "full"
-                  ? `No changes made to ${path}\nClassification: noop\n\n${noopOutline!.text}\n\nFull content is available in details.fullContent.`
-                  : returnMode === "ranges"
-                    ? `No changes made to ${path}\nClassification: noop\n\n${noopOutline!.text}\n\nRequested range payloads are available in details.returnedRanges.`
-                    : `No changes made to ${path}\nClassification: noop\n${noopDetails}`,
-              },
-            ],
-            details: {
-              diff: "",
-              firstChangedLine: undefined,
-              snapshotId: noopSnapshotId,
-              classification: "noop" as const,
-              ...(noopFullPreview?.nextOffset !== undefined
-                ? { nextOffset: noopFullPreview.nextOffset }
-                : {}),
-              ...(noopFullPreview
-                ? {
-                    fullContent: {
-                      text: noopFullPreview.text,
-                      ...(noopFullPreview.nextOffset !== undefined
-                        ? { nextOffset: noopFullPreview.nextOffset }
-                        : {}),
-                    },
-                  }
-                : {}),
-              ...(noopRangePreviews ? { returnedRanges: noopRangePreviews.returnedRanges } : {}),
-              ...(noopOutline ? { structureOutline: noopOutline.outline } : {}),
-            },
-          };
+          return buildNoopResponse({
+            path,
+            returnMode: returnMode as ReturnMode,
+            requestedReturnRanges,
+            noopEdits,
+            originalNormalized,
+            snapshotId: noopSnapshotId,
+            editsAttempted,
+            warnings,
+            legacyReplace,
+            formatHashlineReadPreview: (text) =>
+              formatHashlineReadPreview(text, { offset: 1 }),
+            formatRequestedRangePreviews,
+            buildStructureOutline,
+          });
         }
 
         throwIfAborted(signal);
@@ -1080,114 +1061,31 @@ export function registerEditTool(pi: ExtensionAPI): void {
         );
         const updatedSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
 
-        const diffResult = generateDiffString(originalNormalized, result);
-        if (returnMode === "full") {
-          const fullPreview = formatHashlineReadPreview(result, { offset: 1 });
-          const outline = buildStructureOutline([{ previewText: fullPreview.text }]);
-          const warningsBlock = warnings?.length
-            ? `\n\nWarnings:\n${warnings.join("\n")}`
-            : "";
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Updated ${path}${warningsBlock}\n\n${outline.text}\n\nFull content is available in details.fullContent.`,
-              },
-            ],
-            details: {
-              diff: diffResult.diff,
-              firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
-              snapshotId: updatedSnapshotId,
-              ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
-              fullContent: {
-                text: fullPreview.text,
-                ...(fullPreview.nextOffset !== undefined ? { nextOffset: fullPreview.nextOffset } : {}),
-              },
-              structureOutline: outline.outline,
-              ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
-            },
-          };
-        }
-
-        if (returnMode === "ranges") {
-          const rangePreviews = formatRequestedRangePreviews(result, requestedReturnRanges!);
-          const outline = buildStructureOutline(
-            rangePreviews.returnedRanges.map((range, index) => ({
-              label: `Range ${index + 1} (lines ${range.start}-${range.end})`,
-              previewText: range.text,
-            })),
-          );
-          const warningsBlock = warnings?.length
-            ? `\n\nWarnings:\n${warnings.join("\n")}`
-            : "";
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Updated ${path}${warningsBlock}\n\n${outline.text}\n\nRequested range payloads are available in details.returnedRanges.`,
-              },
-            ],
-            details: {
-              diff: diffResult.diff,
-              firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
-              snapshotId: updatedSnapshotId,
-              returnedRanges: rangePreviews.returnedRanges,
-              structureOutline: outline.outline,
-              ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
-            },
-          };
-        }
-
-        const preview = buildCompactHashlineDiffPreview(diffResult.diff);
-        const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
-        const previewBlock = preview.preview
-          ? `\n\nDiff preview:\n${preview.preview}`
-          : "";
-        const warningsBlock = warnings?.length
-          ? `\n\nWarnings:\n${warnings.join("\n")}`
-          : "";
-
-        const resultLines = result.length === 0
-          ? []
-          : result.endsWith("\n")
-            ? result.split("\n").slice(0, -1)
-            : result.split("\n");
-        const anchorRange = computeAffectedLineRange({
+        const successInput = {
+          path,
+          returnMode: returnMode as ReturnMode,
+          requestedReturnRanges,
+          originalNormalized,
+          result,
+          warnings,
           firstChangedLine,
           lastChangedLine,
-          resultLineCount: resultLines.length,
-        });
-        const anchorsBlock = anchorRange
-          ? (() => {
-              const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
-              const formatted = formatHashlineRegion(region, anchorRange.start);
-              return `\n\n--- Updated anchors (lines ${anchorRange.start}-${anchorRange.end}; use these for subsequent edits in this region, or read for distant edits) ---\n${formatted}`;
-            })()
-          : "";
-
-        // Return-text budget: priority is anchors > summary > diff. Diff preview
-        // is the largest variable-size block, so when the assembled text would
-        // exceed this budget, drop the diff from text (still available in details.diff).
-        const RETURN_TEXT_BUDGET = 1500;
-        const fullText = `Updated ${path}\n${summaryLine}${anchorsBlock}${previewBlock}${warningsBlock}`;
-        const trimmedText = fullText.length > RETURN_TEXT_BUDGET && previewBlock
-          ? `Updated ${path}\n${summaryLine}${anchorsBlock}${warningsBlock}\n\nDiff preview omitted (text budget ${RETURN_TEXT_BUDGET} exceeded; full diff in details.diff).`
-          : fullText;
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: trimmedText,
-            },
-          ],
-          details: {
-            diff: diffResult.diff,
-            firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
-            snapshotId: updatedSnapshotId,
-            ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
-          },
+          snapshotId: updatedSnapshotId,
+          compatibilityDetails: compatibilityDetails as
+            | ResponseCompatibilityDetails
+            | undefined,
+          editsAttempted,
+          noopEditsCount: noopEdits?.length ?? 0,
+          legacyReplace,
+          formatHashlineReadPreview: (text: string) =>
+            formatHashlineReadPreview(text, { offset: 1 }),
+          formatRequestedRangePreviews,
+          buildStructureOutline,
         };
+
+        if (returnMode === "full") return buildFullResponse(successInput);
+        if (returnMode === "ranges") return buildRangesResponse(successInput);
+        return buildChangedResponse(successInput);
       });
     },
   };

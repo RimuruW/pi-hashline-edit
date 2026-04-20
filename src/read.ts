@@ -207,6 +207,12 @@ export function registerReadTool(pi: ExtensionAPI): void {
           // last view"). It is NOT echoed in text — the LLM no longer needs it.
           snapshotId: snapshot.snapshotId,
           ...(preview.nextOffset !== undefined ? { nextOffset: preview.nextOffset } : {}),
+          // Phase 2 C — host-only observability. Truncated reads usually mean
+          // a follow-up read with `offset = next_offset` is coming.
+          metrics: {
+            truncated: !!preview.truncation,
+            ...(preview.nextOffset !== undefined ? { next_offset: preview.nextOffset } : {}),
+          },
         },
       };
     },
