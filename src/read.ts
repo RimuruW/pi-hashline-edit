@@ -200,9 +200,11 @@ export function registerReadTool(pi: ExtensionAPI): void {
       const snapshot = await getFileSnapshot(absolutePath);
 
       return {
-        content: [{ type: "text", text: `${preview.text}\n\n[snapshotId: ${snapshot.snapshotId}]` }],
+        content: [{ type: "text", text: preview.text }],
         details: {
           truncation: preview.truncation,
+          // snapshotId remains in details for host UI (e.g. "file changed since
+          // last view"). It is NOT echoed in text — the LLM no longer needs it.
           snapshotId: snapshot.snapshotId,
           ...(preview.nextOffset !== undefined ? { nextOffset: preview.nextOffset } : {}),
         },

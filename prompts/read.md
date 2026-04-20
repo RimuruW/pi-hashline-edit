@@ -2,9 +2,7 @@ Read a file and return its contents with line-level hash anchors.
 
 Each line is prefixed as `LINE#HASH:content`. Use these anchors when calling `edit`.
 
-> Text-file responses also include a `snapshotId` footer and `details.snapshotId`. Pass that `snapshotId` back to `edit` to confirm the file has not changed since this read.
-
-Empty files return an advisory message. Images (JPEG, PNG, GIF, WebP) are returned as attachments and do not participate in the hashline/snapshot protocol. Binary files and directories are rejected.
+Empty files return an advisory message. Images (JPEG, PNG, GIF, WebP) are returned as attachments and do not participate in the hashline protocol. Binary files and directories are rejected.
 
 Supported parameters:
 - `path` — file path (relative or absolute).

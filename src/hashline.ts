@@ -48,26 +48,16 @@ const DICT = Array.from({ length: 256 }, (_, i) => {
   return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
 });
 
-/** Pattern matching hashline display format prefixes: `LINE#ID:CONTENT` and `#ID:CONTENT` */
+/**
+ * Patterns used to detect (and reject) hashline display prefixes inside edit
+ * payloads. The runtime no longer strips them — the model must send literal
+ * file content. Matching any of these triggers `[E_INVALID_PATCH]`.
+ */
 const HASHLINE_PREFIX_RE =
   /^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
 const HASHLINE_PREFIX_PLUS_RE =
   /^\+\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
-const DIFF_PLUS_RE = /^\+(?!\+)/;
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
-
-function stripDiffPreviewPrefix(line: string): string | null {
-  if (DIFF_MINUS_RE.test(line)) {
-    return null;
-  }
-  if (HASHLINE_PREFIX_PLUS_RE.test(line)) {
-    return line.replace(HASHLINE_PREFIX_PLUS_RE, "");
-  }
-  if (HASHLINE_PREFIX_RE.test(line)) {
-    return line.replace(HASHLINE_PREFIX_RE, "");
-  }
-  return line.replace(DIFF_PLUS_RE, "");
-}
 
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
@@ -111,13 +101,13 @@ function diagnoseLineRef(ref: string): string {
   const core = ref.replace(/^\s*[>+-]*\s*/, "").trim();
 
   if (!core.length) {
-    return `Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+    return `[E_BAD_REF] Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
   }
   if (/^\d+\s*$/.test(core)) {
-    return `Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "5#MQ").`;
+    return `[E_BAD_REF] Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "5#MQ").`;
   }
   if (/^\d+\s*:/.test(core)) {
-    return `Invalid line reference "${ref}": wrong separator, use "LINE#HASH" instead of "LINE:...".`;
+    return `[E_BAD_REF] Invalid line reference "${ref}": wrong separator, use "LINE#HASH" instead of "LINE:...".`;
   }
 
   const hashMatch = core.match(/^(\d+)\s*#\s*([^\s:]+)(?:\s*:.*)?$/);
@@ -125,26 +115,26 @@ function diagnoseLineRef(ref: string): string {
     const line = Number.parseInt(hashMatch[1]!, 10);
     const hash = hashMatch[2]!;
     if (line < 1) {
-      return `Line number must be >= 1, got ${line} in "${ref}".`;
+      return `[E_BAD_REF] Line number must be >= 1, got ${line} in "${ref}".`;
     }
     if (hash.length !== 2) {
-      return `Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`;
+      return `[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`;
     }
     if (!HASH_ALPHABET_RE.test(hash)) {
-      return `Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`;
+      return `[E_BAD_REF] Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`;
     }
   }
 
   const missingHashMatch = core.match(/^(\d+)\s*#\s*$/);
   if (missingHashMatch) {
-    return `Invalid line reference "${ref}": missing hash after "#", use "LINE#HASH" from read output.`;
+    return `[E_BAD_REF] Invalid line reference "${ref}": missing hash after "#", use "LINE#HASH" from read output.`;
   }
 
   if (/^0+\s*#/.test(core)) {
-    return `Line number must be >= 1, got 0 in "${ref}".`;
+    return `[E_BAD_REF] Line number must be >= 1, got 0 in "${ref}".`;
   }
 
-  return `Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+  return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
 }
 
 export function parseLineRef(ref: string): { line: number; hash: string } {
@@ -164,17 +154,17 @@ function parseAnchorRef(ref: string): Anchor {
 
   const line = Number.parseInt(match[1]!, 10);
   if (line < 1) {
-    throw new Error(`Line number must be >= 1, got ${line} in "${ref}".`);
+    throw new Error(`[E_BAD_REF] Line number must be >= 1, got ${line} in "${ref}".`);
   }
 
   const hash = match[2]!;
   if (hash.length !== 2) {
-    throw new Error(`Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`);
+    throw new Error(`[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`);
   }
 
   if (!HASH_ALPHABET_RE.test(hash)) {
     throw new Error(
-      `Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`,
+      `[E_BAD_REF] Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`,
     );
   }
 
@@ -214,7 +204,7 @@ function formatMismatchError(
 
   const sorted = [...displayLines].sort((a, b) => a - b);
   const out: string[] = [
-    `${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
+    `[E_STALE_ANCHOR] ${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
     "",
   ];
 
@@ -237,60 +227,41 @@ function formatMismatchError(
 
 // ─── Content preprocessing ─────────────────────────────────────────────────────
 
-export function stripNewLinePrefixes(lines: string[]): string[] {
-  let hashCount = 0;
-  let hashPlusCount = 0;
-  let minusCount = 0;
-  let diffPreviewCount = 0;
-  let nonEmpty = 0;
-
+/**
+ * Reject hashline display prefixes in edit payloads. Strict semantics: the
+ * model must send literal file content for `lines`, not the rendered read /
+ * diff form. Silent stripping is no longer performed — see AGENTS.md.
+ */
+function assertNoDisplayPrefixes(lines: string[]): void {
   for (const line of lines) {
     if (!line.length) continue;
-    nonEmpty++;
-
-    const isHashLine = HASHLINE_PREFIX_RE.test(line);
-    const isHashPlusLine = HASHLINE_PREFIX_PLUS_RE.test(line);
-    const isMinusLine = DIFF_MINUS_RE.test(line);
-
-    if (isHashLine) hashCount++;
-    if (isHashPlusLine) hashPlusCount++;
-    if (isHashLine || isHashPlusLine || isMinusLine) diffPreviewCount++;
-    if (isMinusLine) minusCount++;
-  }
-
-  if (!nonEmpty) return lines;
-  const stripHash = hashCount > 0 && hashCount === nonEmpty;
-  const stripDiffPreview =
-    !stripHash && (hashPlusCount > 0 || minusCount > 0) && diffPreviewCount === nonEmpty;
-  if (!stripHash && !stripDiffPreview) return lines;
-
-  if (stripDiffPreview) {
-    const stripped: string[] = [];
-    for (const line of lines) {
-      const normalized = stripDiffPreviewPrefix(line);
-      if (normalized !== null) stripped.push(normalized);
+    if (
+      HASHLINE_PREFIX_RE.test(line) ||
+      HASHLINE_PREFIX_PLUS_RE.test(line) ||
+      DIFF_MINUS_RE.test(line)
+    ) {
+      throw new Error(
+        `[E_INVALID_PATCH] "lines" must contain literal file content, not rendered "LINE#HASH:" or diff "+/-" prefixes. Offending line: ${JSON.stringify(line)}`,
+      );
     }
-    return stripped;
   }
-
-  return lines.map((line) => line.replace(HASHLINE_PREFIX_RE, ""));
 }
 
 /**
- * Parse replacement text into lines with prefix stripping.
+ * Parse replacement text into lines.
  *
  * String input is normalized to LF and drops exactly one trailing newline,
- * matching read-preview style content. Array input is preserved verbatim after
- * prefix stripping so explicitly provided blank lines remain intact.
+ * matching read-preview style content. Array input is preserved verbatim so
+ * explicitly provided blank lines remain intact. Display prefixes are
+ * rejected by `assertNoDisplayPrefixes`, never silently stripped.
  */
 export function hashlineParseText(edit: string[] | string | null): string[] {
   if (edit === null) return [];
-  if (typeof edit === "string") {
-    const normalized = edit.endsWith("\n") ? edit.slice(0, -1) : edit;
-    return stripNewLinePrefixes(normalized.replaceAll("\r", "").split("\n"));
-  }
-
-  return stripNewLinePrefixes(edit);
+  const lines = typeof edit === "string"
+    ? (edit.endsWith("\n") ? edit.slice(0, -1) : edit).replaceAll("\r", "").split("\n")
+    : edit;
+  assertNoDisplayPrefixes(lines);
+  return lines;
 }
 
 /**
@@ -320,14 +291,14 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
       op !== "replace_text"
     ) {
       throw new Error(
-        `Unknown edit op "${op}". Expected "replace", "append", "prepend", or "replace_text".`,
+        `[E_BAD_OP] Unknown edit op "${op}". Expected "replace", "append", "prepend", or "replace_text".`,
       );
     }
 
     switch (op) {
       case "replace": {
         if (!edit.pos) {
-          throw new Error('Replace requires a "pos" anchor.');
+          throw new Error('[E_BAD_OP] Replace requires a "pos" anchor.');
         }
 
         result.push({
@@ -340,7 +311,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
       }
       case "append": {
         if (edit.end !== undefined) {
-          throw new Error('Append does not support "end". Use "pos" or omit it for EOF.');
+          throw new Error('[E_BAD_OP] Append does not support "end". Use "pos" or omit it for EOF.');
         }
 
         result.push({
@@ -352,7 +323,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
       }
       case "prepend": {
         if (edit.end !== undefined) {
-          throw new Error('Prepend does not support "end". Use "pos" or omit it for BOF.');
+          throw new Error('[E_BAD_OP] Prepend does not support "end". Use "pos" or omit it for BOF.');
         }
 
         result.push({
@@ -366,7 +337,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
         const oldText = normalizeExactText(edit.oldText);
         const newText = normalizeExactText(edit.newText);
         if (oldText === undefined || newText === undefined) {
-          throw new Error('replace_text requires string "oldText" and "newText" fields.');
+          throw new Error('[E_BAD_OP] replace_text requires string "oldText" and "newText" fields.');
         }
 
         result.push({
@@ -484,7 +455,7 @@ function throwEditConflict(
   reason: string,
 ): never {
   throw new Error(
-    `Conflicting edits in a single request: edit ${left.index} (${left.label}) and edit ${right.index} (${right.label}) ${reason}. Merge them into one non-overlapping change or split the request.`,
+    `[E_EDIT_CONFLICT] Conflicting edits in a single request: edit ${left.index} (${left.label}) and edit ${right.index} (${right.label}) ${reason}. Merge them into one non-overlapping change or split the request.`,
   );
 }
 
@@ -544,7 +515,7 @@ function findExactUniqueTextMatch(
   oldText: string,
 ): { start: number; end: number } {
   if (oldText.length === 0) {
-    throw new Error("replace_text requires non-empty oldText.");
+    throw new Error("[E_BAD_OP] replace_text requires non-empty oldText.");
   }
 
   const matches: number[] = [];
@@ -561,18 +532,18 @@ function findExactUniqueTextMatch(
   for (let index = 1; index < matches.length; index++) {
     if (matches[index]! - matches[index - 1]! < oldText.length) {
       throw new Error(
-        "replace_text found overlapping exact matches; re-read and use hashline edits.",
+        "[E_MULTI_MATCH] replace_text found overlapping exact matches; re-read and use hashline edits.",
       );
     }
   }
 
   if (matches.length === 0) {
-    throw new Error("replace_text found no exact unique match in the current file.");
+    throw new Error("[E_NO_MATCH] replace_text found no exact unique match in the current file.");
   }
 
   if (matches.length > 1) {
     throw new Error(
-      "replace_text found multiple exact matches in the current file. Re-read and use hashline edits.",
+      "[E_MULTI_MATCH] replace_text found multiple exact matches in the current file. Re-read and use hashline edits.",
     );
   }
 
@@ -805,7 +776,7 @@ export function applyHashlineEdits(
   const acceptedFuzzyRefs = new Set<string>();
   function validate(ref: Anchor): boolean {
     if (ref.line < 1 || ref.line > lineIndex.fileLines.length) {
-      throw new Error(`Line ${ref.line} does not exist (file has ${lineIndex.fileLines.length} lines)`);
+      throw new Error(`[E_RANGE_OOB] Line ${ref.line} does not exist (file has ${lineIndex.fileLines.length} lines)`);
     }
     const line = lineIndex.fileLines[ref.line - 1]!;
     const actual = computeLineHash(ref.line, line);
@@ -835,7 +806,7 @@ export function applyHashlineEdits(
         if (edit.end) {
           if (edit.pos.line > edit.end.line) {
             throw new Error(
-              `Range start line ${edit.pos.line} must be <= end line ${edit.end.line}`,
+              `[E_BAD_OP] Range start line ${edit.pos.line} must be <= end line ${edit.end.line}`,
             );
           }
           const startOk = validate(edit.pos);
@@ -869,7 +840,7 @@ export function applyHashlineEdits(
         if (edit.pos && !validate(edit.pos)) continue;
         if (edit.lines.length === 0) {
           throw new Error(
-            "Append with empty lines payload. Provide content to insert or remove the edit.",
+            "[E_BAD_OP] Append with empty lines payload. Provide content to insert or remove the edit.",
           );
         }
         break;
@@ -878,7 +849,7 @@ export function applyHashlineEdits(
         if (edit.pos && !validate(edit.pos)) continue;
         if (edit.lines.length === 0) {
           throw new Error(
-            "Prepend with empty lines payload. Provide content to insert or remove the edit.",
+            "[E_BAD_OP] Prepend with empty lines payload. Provide content to insert or remove the edit.",
           );
         }
         break;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { readFile, symlink, writeFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import register from "../../index";
 import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
@@ -8,8 +8,8 @@ function getText(result: { content: Array<{ text?: string }> }): string {
   return result.content[0]?.text ?? "";
 }
 
-describe("snapshotId protocol", () => {
-  it("read returns snapshotId in both text and details", async () => {
+describe("snapshotId surface (details-only after W2)", () => {
+  it("read writes snapshotId to details but not to text", async () => {
     await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
@@ -23,67 +23,17 @@ describe("snapshotId protocol", () => {
         { cwd } as any,
       );
 
-      expect(getText(result)).toContain("snapshotId:");
+      expect(getText(result)).not.toContain("snapshotId");
+      expect(getText(result)).not.toContain("SnapshotId");
       expect(result.details?.snapshotId).toEqual(expect.any(String));
     });
   });
 
-  it("edit accepts a matching snapshotId", async () => {
+  it("edit no longer accepts a snapshotId field on the request", async () => {
     await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
-      const readTool = getTool("read");
       const editTool = getTool("edit");
-
-      const readResult = await readTool.execute(
-        "r1",
-        { path: "sample.txt" },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const snapshotId = readResult.details?.snapshotId;
-
-      const result = await editTool.execute(
-        "e1",
-        {
-          path: "sample.txt",
-          snapshotId,
-          edits: [
-            {
-              op: "replace",
-              pos: `2#${computeLineHash(2, "beta")}`,
-              lines: ["BETA"],
-            },
-          ],
-        },
-        undefined,
-        undefined,
-        { cwd, hasUI: true, ui: { notify() {} } } as any,
-      );
-
-      expect(getText(result)).toContain("Updated sample.txt");
-      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\n");
-    });
-  });
-
-  it("rejects a stale snapshotId before applying edits and returns refresh anchors", async () => {
-    await withTempFile("sample.txt", "one\ntwo\nthree\nfour\nfive\n", async ({ cwd, path }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      register(pi);
-      const readTool = getTool("read");
-      const editTool = getTool("edit");
-
-      const readResult = await readTool.execute(
-        "r1",
-        { path: "sample.txt" },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const snapshotId = readResult.details?.snapshotId;
-
-      await writeFile(path, "one\nTWO!\nthree\nfour\nfive\n", "utf-8");
 
       let errorMessage = "";
       try {
@@ -91,7 +41,45 @@ describe("snapshotId protocol", () => {
           "e1",
           {
             path: "sample.txt",
-            snapshotId,
+            snapshotId: "v1|fake|0|0",
+            edits: [
+              {
+                op: "replace",
+                pos: `2#${computeLineHash(2, "beta")}`,
+                lines: ["BETA"],
+              },
+            ],
+          },
+          undefined,
+          undefined,
+          { cwd, hasUI: true, ui: { notify() {} } } as any,
+        );
+      } catch (error: unknown) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
+
+      expect(errorMessage).toContain("unknown or unsupported fields");
+      expect(errorMessage).toContain("snapshotId");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\n");
+    });
+  });
+
+  it("edit succeeds even when the file changed on disk between read and edit, as long as anchors still match", async () => {
+    await withTempFile(
+      "sample.txt",
+      "one\ntwo\nthree\nfour\nfive\n",
+      async ({ cwd, path }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const editTool = getTool("edit");
+
+        // External, unrelated change: line 2 mutated, line 4 still "four".
+        await writeFile(path, "one\nTWO!\nthree\nfour\nfive\n", "utf-8");
+
+        const result = await editTool.execute(
+          "e1",
+          {
+            path: "sample.txt",
             edits: [
               {
                 op: "replace",
@@ -104,81 +92,25 @@ describe("snapshotId protocol", () => {
           undefined,
           { cwd, hasUI: true, ui: { notify() {} } } as any,
         );
-      } catch (error: unknown) {
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
 
-      expect(errorMessage).toMatch(/snapshotId|stale/i);
-      expect(errorMessage).toContain("Refresh anchors:");
-      expect(errorMessage).toContain(`>>> 4#${computeLineHash(4, "four")}:four`);
-      expect(errorMessage).toContain(`2#${computeLineHash(2, "TWO!")}:TWO!`);
-    });
+        expect(getText(result)).toContain("Updated sample.txt");
+        expect(await readFile(path, "utf-8")).toBe(
+          "one\nTWO!\nthree\nFOUR\nfive\n",
+        );
+      },
+    );
   });
 
-  it("returns a fresh snapshotId for noop edits even when no snapshotId was provided", async () => {
-    await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
+  it("edit text response no longer contains a SnapshotId line", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
-      const readTool = getTool("read");
       const editTool = getTool("edit");
-
-      const readResult = await readTool.execute(
-        "r1",
-        { path: "sample.txt" },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const oldSnapshotId = readResult.details?.snapshotId;
-
-      await writeFile(path, "alpha\nBETA\n", "utf-8");
 
       const result = await editTool.execute(
         "e1",
         {
           path: "sample.txt",
-          edits: [
-            {
-              op: "replace",
-              pos: `2#${computeLineHash(2, "BETA")}`,
-              lines: ["BETA"],
-            },
-          ],
-        },
-        undefined,
-        undefined,
-        { cwd, hasUI: true, ui: { notify() {} } } as any,
-      );
-
-      expect(result.details?.classification).toBe("noop");
-      expect(result.details?.snapshotId).toEqual(expect.any(String));
-      expect(result.details?.snapshotId).not.toBe(oldSnapshotId);
-    });
-  });
-
-  it("accepts a snapshotId across symlink aliases to the same file", async () => {
-    await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd, path }) => {
-      await symlink("sample.txt", `${cwd}/linked-sample.txt`);
-
-      const { pi, getTool } = makeFakePiRegistry();
-      register(pi);
-      const readTool = getTool("read");
-      const editTool = getTool("edit");
-
-      const readResult = await readTool.execute(
-        "r1",
-        { path: "linked-sample.txt" },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const snapshotId = readResult.details?.snapshotId;
-
-      const result = await editTool.execute(
-        "e1",
-        {
-          path: "sample.txt",
-          snapshotId,
           edits: [
             {
               op: "replace",
@@ -192,57 +124,51 @@ describe("snapshotId protocol", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
-      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\n");
+      expect(getText(result)).not.toContain("SnapshotId");
+      // details still expose the post-edit fingerprint for host UIs.
+      expect(result.details?.snapshotId).toEqual(expect.any(String));
     });
   });
 
-  it("clamps refresh anchors toward EOF when the requested line no longer exists", async () => {
-    const original = Array.from({ length: 20 }, (_, index) => `line-${index + 1}`).join("\n") + "\n";
-    const shrunk = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`).join("\n") + "\n";
-    await withTempFile("sample.txt", original, async ({ cwd, path }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      register(pi);
-      const readTool = getTool("read");
-      const editTool = getTool("edit");
+  it("a stale anchor still triggers [E_STALE_ANCHOR] with refresh hints", async () => {
+    await withTempFile(
+      "sample.txt",
+      "one\ntwo\nthree\n",
+      async ({ cwd, path }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const editTool = getTool("edit");
 
-      const readResult = await readTool.execute(
-        "r1",
-        { path: "sample.txt" },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const snapshotId = readResult.details?.snapshotId;
+        // External change: rewrite the line we are about to target.
+        await writeFile(path, "one\nTWO!\nthree\n", "utf-8");
 
-      await writeFile(path, shrunk, "utf-8");
+        let errorMessage = "";
+        try {
+          await editTool.execute(
+            "e1",
+            {
+              path: "sample.txt",
+              edits: [
+                {
+                  op: "replace",
+                  pos: `2#${computeLineHash(2, "two")}`,
+                  lines: ["TWO"],
+                },
+              ],
+            },
+            undefined,
+            undefined,
+            { cwd, hasUI: true, ui: { notify() {} } } as any,
+          );
+        } catch (error: unknown) {
+          errorMessage = error instanceof Error ? error.message : String(error);
+        }
 
-      let errorMessage = "";
-      try {
-        await editTool.execute(
-          "e1",
-          {
-            path: "sample.txt",
-            snapshotId,
-            edits: [
-              {
-                op: "replace",
-                pos: `18#${computeLineHash(18, "line-18")}`,
-                lines: ["LINE-18"],
-              },
-            ],
-          },
-          undefined,
-          undefined,
-          { cwd, hasUI: true, ui: { notify() {} } } as any,
+        expect(errorMessage).toMatch(/^\[E_STALE_ANCHOR\]/);
+        expect(errorMessage).toContain(
+          `>>> 2#${computeLineHash(2, "TWO!")}:TWO!`,
         );
-      } catch (error: unknown) {
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
-
-      expect(errorMessage).toContain("Refresh anchors:");
-      expect(errorMessage).toContain(`>>> 10#${computeLineHash(10, "line-10")}:line-10`);
-      expect(errorMessage).not.toContain(`1#${computeLineHash(1, "line-1")}:line-1`);
-    });
+      },
+    );
   });
 });

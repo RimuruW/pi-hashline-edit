@@ -278,16 +278,14 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
     expect(result.content).toBe("aaa\nbbb\nfooter");
   });
 
-  it("full pipeline: hashline-prefixed string lines get stripped", () => {
+  it("full pipeline: hashline-prefixed string lines are rejected (no autocorrection)", () => {
     const content = "aaa\nbbb\nccc";
     const tag2 = `2#${computeLineHash(2, "bbb")}`;
     const hash = computeLineHash(2, "BBB");
     const toolEdits: HashlineToolEdit[] = [
       { op: "replace", pos: tag2, lines: `2#${hash}:BBB` },
     ];
-    const resolved = resolveEditAnchors(toolEdits);
-    const result = applyHashlineEdits(content, resolved);
-    expect(result.content).toBe("aaa\nBBB\nccc");
+    expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("full pipeline: copied full-line anchor tolerates fuzzy same-line Unicode differences", () => {
@@ -317,7 +315,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
     expect(() => applyHashlineEdits(content, resolved)).toThrow(/stale anchor/);
   });
 
-  it("full pipeline: copied diff-preview replace hunk drops deletion rows", () => {
+  it("full pipeline: copied diff-preview hunks are rejected (no autocorrection)", () => {
     const content = "aaa\nbbb\nccc";
     const start = `1#${computeLineHash(1, "aaa")}`;
     const end = `3#${computeLineHash(3, "ccc")}`;
@@ -330,8 +328,6 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
     const toolEdits: HashlineToolEdit[] = [
       { op: "replace", pos: start, end, lines: replacement },
     ];
-    const resolved = resolveEditAnchors(toolEdits);
-    const result = applyHashlineEdits(content, resolved);
-    expect(result.content).toBe("aaa\nBBB\nccc");
+    expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 });
