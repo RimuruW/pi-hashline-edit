@@ -8,12 +8,14 @@ const IMAGE_MIME_TYPES = new Set<string>([
   "image/webp",
 ]);
 
-function isTextCandidateMimeType(mimeType: string): boolean {
-  return (
-    mimeType === "application/xml" ||
-    mimeType === "text/xml" ||
-    mimeType.endsWith("+xml")
-  );
+const TEXT_LIKE_MIME_TYPES = new Set<string>([
+  "application/rtf",
+  "application/xml",
+  "application/x-ms-regedit",
+]);
+
+function isTextLikeMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("text/") || TEXT_LIKE_MIME_TYPES.has(mimeType);
 }
 const FILE_TYPE_SNIFF_BYTES = 8192;
 
@@ -81,7 +83,7 @@ export async function loadFileKindAndText(filePath: string): Promise<LoadedFile>
       if (IMAGE_MIME_TYPES.has(fileType.mime)) {
         return { kind: "image", mimeType: fileType.mime };
       }
-      if (!isTextCandidateMimeType(fileType.mime)) {
+      if (!isTextLikeMimeType(fileType.mime)) {
         return {
           kind: "binary",
           description: fileType.mime,

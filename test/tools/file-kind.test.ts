@@ -77,6 +77,22 @@ describe("classifyFileKind", () => {
     );
   });
 
+  it("classifies recognized text/* MIME types as text", async () => {
+    await withTempFile(
+      "captions.vtt",
+      "WEBVTT\n\n00:00.000 --> 00:01.000\nhello\n",
+      async ({ path }) => {
+        await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+      },
+    );
+  });
+
+  it("classifies recognized application/* text-like MIME types as text", async () => {
+    await withTempFile("sample.rtf", "{\\rtf1\\ansi hello}\n", async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+    });
+  });
+
   it("classifies utf-8 text as text when the sniff window ends mid-code-point", async () => {
     const prefix = new Uint8Array(8190).fill(0x61);
     const emDash = new Uint8Array([0xe2, 0x80, 0x94]);
