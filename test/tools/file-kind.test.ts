@@ -67,6 +67,16 @@ describe("classifyFileKind", () => {
     });
   });
 
+  it("classifies utf-8 xml with a declaration as text", async () => {
+    await withTempFile(
+      "layout.xml",
+      '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />\n',
+      async ({ path }) => {
+        await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+      },
+    );
+  });
+
   it("classifies utf-8 text as text when the sniff window ends mid-code-point", async () => {
     const prefix = new Uint8Array(8190).fill(0x61);
     const emDash = new Uint8Array([0xe2, 0x80, 0x94]);
@@ -264,6 +274,28 @@ describe("file kind guards in tools", () => {
 
       expect(getText(result)).toContain("—");
     });
+  });
+
+  it("read accepts utf-8 xml that file-type recognizes as xml", async () => {
+    await withTempFile(
+      "layout.xml",
+      '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />\n',
+      async ({ cwd }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const readTool = getTool("read");
+
+        const result = await readTool.execute(
+          "r1",
+          { path: "layout.xml" },
+          undefined,
+          undefined,
+          { cwd } as any,
+        );
+
+        expect(getText(result)).toContain("<LinearLayout");
+      },
+    );
   });
 
   it("read rejects binary files with classifier detail", async () => {

@@ -7,6 +7,14 @@ const IMAGE_MIME_TYPES = new Set<string>([
   "image/gif",
   "image/webp",
 ]);
+
+function isTextCandidateMimeType(mimeType: string): boolean {
+  return (
+    mimeType === "application/xml" ||
+    mimeType === "text/xml" ||
+    mimeType.endsWith("+xml")
+  );
+}
 const FILE_TYPE_SNIFF_BYTES = 8192;
 
 export type FileKind =
@@ -73,10 +81,12 @@ export async function loadFileKindAndText(filePath: string): Promise<LoadedFile>
       if (IMAGE_MIME_TYPES.has(fileType.mime)) {
         return { kind: "image", mimeType: fileType.mime };
       }
-      return {
-        kind: "binary",
-        description: fileType.mime,
-      };
+      if (!isTextCandidateMimeType(fileType.mime)) {
+        return {
+          kind: "binary",
+          description: fileType.mime,
+        };
+      }
     }
 
     if (hasNullByte(sample)) {
