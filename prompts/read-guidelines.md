@@ -1,1 +1,3 @@
-- Use read to examine files instead of cat or sed.
+- Use read before edit when you need current anchors.
+- If a read is truncated, continue with the suggested `offset` instead of guessing unseen lines.
+- Treat `LINE#HASH` prefixes as protocol data: copy anchors verbatim, but do not include those prefixes in replacement content.

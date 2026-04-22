@@ -1,1 +1,1 @@
-Make precise file edits with LINE#HASH anchors, including multiple disjoint edits in one call
+Patch text files using anchors copied verbatim from read
