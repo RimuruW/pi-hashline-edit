@@ -26,6 +26,6 @@ Critical rules:
 - All anchors in one call must come from the same pre-edit snapshot. Merge overlapping or adjacent edits.
 - `replace_text` must match exactly once. If it does not, re-read and switch to anchors.
 
-`returnMode` is optional. `changed` (default) returns a change summary plus fresh anchors for the changed region. `full` and `ranges` return post-edit previews in `details`.
+`returnMode` is optional. `changed` (default) returns fresh anchors for the changed region when they fit the budget; otherwise it returns a short hint to `read` before continuing. If the file becomes empty, it returns the empty-file insertion hint instead. `full` and `ranges` return post-edit previews in `details`.
 
 If the edit succeeds, prefer the returned fresh anchors for nearby follow-up edits. If you hit stale-anchor or match errors, re-read and retry with current anchors or narrower text.

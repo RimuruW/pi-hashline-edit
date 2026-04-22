@@ -8,7 +8,7 @@ function getText(result: { content: Array<{ text?: string }> }): string {
 }
 
 describe("edit tool text shape (token budget)", () => {
-  it("changed mode keeps diff in details but not in the LLM-visible text", async () => {
+  it("changed mode keeps only anchors in LLM-visible text and line counts in details", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
@@ -32,13 +32,17 @@ describe("edit tool text shape (token budget)", () => {
       );
 
       const text = getText(result);
-      expect(text).toContain("Updated sample.ts");
-      expect(text).toContain("Changes: +1 -1");
       expect(text).toContain("--- Anchors ");
+      expect(text).not.toContain("Updated sample.ts");
+      expect(text).not.toContain("Changes: +1 -1");
       expect(text).not.toContain("Diff preview");
       expect(text).not.toContain("Updated anchors");
       expect(result.details?.diff).toContain("+2");
       expect(result.details?.diff).toContain(":BBB");
+      expect(result.details?.metrics).toMatchObject({
+        added_lines: 1,
+        removed_lines: 1,
+      });
     });
   });
 
@@ -169,6 +173,66 @@ describe("edit tool text shape (token budget)", () => {
       expect(text).toContain("Classification: noop");
       expect(text).not.toContain("Structure outline:");
       expect(text).toContain("details.fullContent");
+    });
+  });
+
+  it("changed mode returns the empty-file insertion hint after deleting all content", async () => {
+    await withTempFile("sample.txt", "only\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          edits: [
+            {
+              op: "replace",
+              pos: `1#${computeLineHash(1, "only")}`,
+              lines: [],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      const text = getText(result);
+      expect(text).toBe(
+        "File is empty. Use edit with prepend or append and omit pos to insert content.",
+      );
+      expect(text).not.toContain("use read");
+    });
+  });
+  it("changed mode omits oversized anchor payloads even when the changed span fits by line count", async () => {
+    const longLine = "a".repeat(60_000);
+    await withTempFile("sample.txt", `before\n${longLine}\nafter\n`, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          edits: [
+            {
+              op: "replace",
+              pos: `2#${computeLineHash(2, longLine)}`,
+              lines: [`b${longLine.slice(1)}`],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      const text = getText(result);
+      expect(text).toContain("Anchors omitted; use read");
+      expect(text).not.toContain("--- Anchors");
     });
   });
 });

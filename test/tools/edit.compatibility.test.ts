@@ -139,8 +139,8 @@ describe("edit tool compatibility mode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
-      expect(getText(result)).toContain("Changes: +1 -1");
+      expect(getText(result)).toContain("--- Anchors");
+      expect(getText(result)).not.toContain("Changes: +1 -1");
       expect(getText(result)).not.toContain("Diff preview:");
       expect(getText(result)).not.toMatch(/compatibility|fallback/i);
       expect(result.details?.diff).toContain("+2");
@@ -199,7 +199,7 @@ describe("edit tool compatibility mode", () => {
           { cwd, hasUI: true, ui: { notify() {} } } as any,
         );
 
-        expect(getText(result)).toContain("Updated sample.txt");
+        expect(getText(result)).toContain("--- Anchors");
         expect(result.details).toMatchObject({
           compatibility: {
             used: true,
@@ -230,7 +230,7 @@ describe("edit tool compatibility mode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(result.details).toMatchObject({
         compatibility: {
           used: true,
@@ -262,7 +262,7 @@ describe("edit tool compatibility mode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(result.details).toMatchObject({
         compatibility: {
           used: true,
@@ -316,8 +316,8 @@ describe("edit tool compatibility mode", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
-      expect(getText(result)).toContain("Changes: +1 -1");
+      expect(getText(result)).toContain("--- Anchors");
+      expect(getText(result)).not.toContain("Changes: +1 -1");
       expect(getText(result)).not.toContain("Diff preview:");
       expect(result.details?.diff).toContain(":BBB");
       expect(result.details?.compatibility).toBeUndefined();
@@ -342,7 +342,7 @@ describe("execute accepts legacy payloads via hidden compatibility path", () => 
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(await readFile(path, "utf-8")).toBe("hello universe");
     });
   });
@@ -361,7 +361,7 @@ describe("execute accepts legacy payloads via hidden compatibility path", () => 
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(await readFile(path, "utf-8")).toBe("hello universe");
     });
   });

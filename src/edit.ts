@@ -125,6 +125,8 @@ type EditMetrics = {
   return_mode: "changed" | "full" | "ranges";
   classification: "applied" | "noop";
   changed_lines?: { first: number; last: number };
+  added_lines?: number;
+  removed_lines?: number;
   legacy_replace?: true;
 };
 
@@ -441,6 +443,7 @@ type EditPreview = { diff: string } | { error: string };
 type EditRenderState = {
   argsKey?: string;
   preview?: EditPreview;
+  previewGeneration?: number;
 };
 
 function getRenderablePreviewInput(args: unknown): EditRequestParams | null {
@@ -506,6 +509,27 @@ function getRenderedEditTextContent(
   );
   return textContent?.text;
 }
+
+function buildUiRenderedEditText(
+  text: string | undefined,
+  details: HashlineEditToolDetails | undefined,
+): string | undefined {
+  const sections: string[] = [];
+  const metrics = details?.metrics;
+  if (
+    metrics?.classification === "applied" &&
+    metrics.return_mode === "changed" &&
+    metrics.added_lines !== undefined &&
+    metrics.removed_lines !== undefined
+  ) {
+    sections.push(`Changes: +${metrics.added_lines} -${metrics.removed_lines}`);
+  }
+  if (text && text.length > 0) {
+    sections.push(text);
+  }
+  return sections.length > 0 ? sections.join("\n\n") : undefined;
+}
+
 
 function trimEdgeEmptyLines(lines: string[]): string[] {
   let start = 0;
@@ -831,20 +855,29 @@ export function registerEditTool(pi: ExtensionAPI): void {
       if (!context.argsComplete || !previewInput) {
         context.state.argsKey = undefined;
         context.state.preview = undefined;
+        context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
       } else {
         const argsKey = JSON.stringify(previewInput);
         if (context.state.argsKey !== argsKey) {
           context.state.argsKey = argsKey;
           context.state.preview = undefined;
+          const previewGeneration = (context.state.previewGeneration ?? 0) + 1;
+          context.state.previewGeneration = previewGeneration;
           computeEditPreview(previewInput, context.cwd)
             .then((preview) => {
-              if (context.state.argsKey === argsKey) {
+              if (
+                context.state.argsKey === argsKey &&
+                context.state.previewGeneration === previewGeneration
+              ) {
                 context.state.preview = preview;
                 context.invalidate();
               }
             })
             .catch((err: unknown) => {
-              if (context.state.argsKey === argsKey) {
+              if (
+                context.state.argsKey === argsKey &&
+                context.state.previewGeneration === previewGeneration
+              ) {
                 context.state.preview = {
                   error: err instanceof Error ? err.message : String(err),
                 };
@@ -872,14 +905,26 @@ export function registerEditTool(pi: ExtensionAPI): void {
         return text;
       }
 
-      const renderedText = getRenderedEditTextContent(
-        result as { content?: Array<{ type: string; text?: string }> },
-      );
-      if (!renderedText) {
-        return new Text("", 0, 0);
+      const typedResult = result as {
+        content?: Array<{ type: string; text?: string }> ;
+        details?: HashlineEditToolDetails;
+      };
+      const renderedText = getRenderedEditTextContent(typedResult);
+
+      const renderState = context.state as EditRenderState | undefined;
+      if (renderState) {
+        const hadPreview = renderState.preview !== undefined;
+        renderState.preview = undefined;
+        renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
+        if (hadPreview) {
+          context.invalidate();
+        }
       }
 
       if (context.isError) {
+        if (!renderedText) {
+          return new Text("", 0, 0);
+        }
         const text = context.lastComponent instanceof Text
           ? context.lastComponent
           : new Text("", 0, 0);
@@ -887,11 +932,19 @@ export function registerEditTool(pi: ExtensionAPI): void {
         return text;
       }
 
+      const uiRenderedText = buildUiRenderedEditText(
+        renderedText,
+        typedResult.details,
+      );
+      if (!uiRenderedText) {
+        return new Text("", 0, 0);
+      }
+
       const markdown = context.lastComponent instanceof Markdown
         ? context.lastComponent
         : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
       markdown.setText(
-        formatRenderedEditResultMarkdown(renderedText, { expanded }),
+        formatRenderedEditResultMarkdown(uiRenderedText, { expanded }),
       );
       return markdown;
     },

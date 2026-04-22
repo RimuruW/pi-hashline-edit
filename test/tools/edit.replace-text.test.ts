@@ -27,7 +27,7 @@ describe("edit tool replace_text op", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\n");
       expect(result.details?.compatibility).toBeUndefined();
     });
@@ -54,7 +54,7 @@ describe("edit tool replace_text op", () => {
         { cwd, hasUI: true, ui: { notify() {} } } as any,
       );
 
-      expect(getText(result)).toContain("Updated sample.txt");
+      expect(getText(result)).toContain("--- Anchors");
       expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\nddd\n");
     });
   });

@@ -26,6 +26,8 @@ import {
   formatHashlineRegion,
 } from "./hashline";
 
+const CHANGED_ANCHOR_TEXT_BUDGET_BYTES = 50 * 1024;
+
 // ─── Public types ───────────────────────────────────────────────────────
 
 export type ReturnMode = "changed" | "full" | "ranges";
@@ -70,6 +72,8 @@ export type EditMetrics = {
   return_mode: ReturnMode;
   classification: "applied" | "noop";
   changed_lines?: { first: number; last: number };
+  added_lines?: number;
+  removed_lines?: number;
   legacy_replace?: true;
 };
 
@@ -160,6 +164,8 @@ function buildMetrics(args: {
   legacyReplace: boolean;
   firstChangedLine?: number;
   lastChangedLine?: number;
+  addedLines?: number;
+  removedLines?: number;
 }): EditMetrics {
   const metrics: EditMetrics = {
     edits_attempted: args.editsAttempted,
@@ -179,6 +185,8 @@ function buildMetrics(args: {
       last: args.lastChangedLine,
     };
   }
+  if (args.addedLines !== undefined) metrics.added_lines = args.addedLines;
+  if (args.removedLines !== undefined) metrics.removed_lines = args.removedLines;
   return metrics;
 }
 
@@ -393,7 +401,6 @@ export function buildRangesResponse(input: SuccessResponseInput): ToolResult {
 
 export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
   const {
-    path,
     result,
     warnings,
     firstChangedLine,
@@ -409,7 +416,6 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
   const diffResult = generateDiffString(originalNormalized, result);
   const addedLines = countDiffLines(diffResult.diff, "+");
   const removedLines = countDiffLines(diffResult.diff, "-");
-  const summaryLine = `Changes: +${addedLines} -${removedLines}`;
   const warningsBlock = warningsBlockOf(warnings);
 
   const resultLines = getVisibleLines(result);
@@ -422,11 +428,18 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
     ? (() => {
         const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
         const formatted = formatHashlineRegion(region, anchorRange.start);
-        return `\n\n--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
+        const block = `--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
+        return Buffer.byteLength(block, "utf8") <= CHANGED_ANCHOR_TEXT_BUDGET_BYTES
+          ? block
+          : "Anchors omitted; use read for subsequent edits.";
       })()
-    : "";
+    : resultLines.length === 0
+      ? "File is empty. Use edit with prepend or append and omit pos to insert content."
+      : "Anchors omitted; use read for subsequent edits.";
 
-  const text = `Updated ${path}\n${summaryLine}${anchorsBlock}${warningsBlock}`;
+  const text = [anchorsBlock, warningsBlock.trimStart()]
+    .filter((section) => section.length > 0)
+    .join("\n\n");
 
   const metrics = buildMetrics({
     classification: "applied",
@@ -437,6 +450,8 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
     legacyReplace,
     firstChangedLine,
     lastChangedLine,
+    addedLines,
+    removedLines,
   });
 
   return {
