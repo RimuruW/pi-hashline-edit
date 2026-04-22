@@ -67,6 +67,45 @@ describe("classifyFileKind", () => {
     });
   });
 
+  it("classifies utf-8 xml with a declaration as text", async () => {
+    await withTempFile(
+      "layout.xml",
+      '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />\n',
+      async ({ path }) => {
+        await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+      },
+    );
+  });
+
+  it("classifies utf-16 xml as binary via the null-byte guard", async () => {
+    const xml = '<?xml version="1.0" encoding="utf-16"?>\n<LinearLayout />\n';
+    const utf16LeBom = Buffer.from([0xff, 0xfe]);
+    const utf16Xml = Buffer.concat([utf16LeBom, Buffer.from(xml, "utf16le")]);
+
+    await withTempBytes("layout-utf16.xml", utf16Xml, async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({
+        kind: "binary",
+        description: "null bytes detected",
+      });
+    });
+  });
+
+  it("classifies recognized text/* MIME types as text", async () => {
+    await withTempFile(
+      "captions.vtt",
+      "WEBVTT\n\n00:00.000 --> 00:01.000\nhello\n",
+      async ({ path }) => {
+        await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+      },
+    );
+  });
+
+  it("classifies recognized application/* text-like MIME types as text", async () => {
+    await withTempFile("sample.rtf", "{\\rtf1\\ansi hello}\n", async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+    });
+  });
+
   it("classifies utf-8 text as text when the sniff window ends mid-code-point", async () => {
     const prefix = new Uint8Array(8190).fill(0x61);
     const emDash = new Uint8Array([0xe2, 0x80, 0x94]);
@@ -263,6 +302,59 @@ describe("file kind guards in tools", () => {
       );
 
       expect(getText(result)).toContain("—");
+    });
+  });
+
+  it("read accepts utf-8 xml that file-type recognizes as xml", async () => {
+    await withTempFile(
+      "layout.xml",
+      '<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />\n',
+      async ({ cwd }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const readTool = getTool("read");
+
+        const result = await readTool.execute(
+          "r1",
+          { path: "layout.xml" },
+          undefined,
+          undefined,
+          { cwd } as any,
+        );
+
+        const text = getText(result);
+        expect(text).toContain("<LinearLayout");
+        expect(text).not.toMatch(/binary file/i);
+        // Text path renders hashline-prefixed lines (e.g. "1#<hash>:<?xml ...").
+        expect(text).toMatch(/^\d+#[ZPMQVRWSNKTXJBYH]{2}:<\?xml/m);
+      },
+    );
+  });
+
+  it("read rejects utf-16 xml as binary because of null bytes", async () => {
+    const declaration = '<?xml version="1.0"?>\n<root/>\n';
+    const payload = Buffer.from(declaration, "utf16le");
+    const bytes = new Uint8Array(2 + payload.length);
+    // UTF-16 LE BOM: file-type still detects this as application/xml, so the
+    // regression guard relies on the null-byte check further down.
+    bytes[0] = 0xff;
+    bytes[1] = 0xfe;
+    bytes.set(payload, 2);
+
+    await withTempBytes("layout-utf16.xml", bytes, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      await expect(
+        readTool.execute(
+          "r1",
+          { path: "layout-utf16.xml" },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/binary file: layout-utf16\.xml \(null bytes detected\)/i);
     });
   });
 

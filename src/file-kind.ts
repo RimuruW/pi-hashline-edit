@@ -7,6 +7,17 @@ const IMAGE_MIME_TYPES = new Set<string>([
   "image/gif",
   "image/webp",
 ]);
+
+const TEXT_LIKE_MIME_TYPES = new Set<string>([
+  "application/rtf",
+  "application/xml",
+  "application/x-ms-regedit",
+]);
+
+function isTextLikeMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("text/") || TEXT_LIKE_MIME_TYPES.has(mimeType);
+}
+
 const FILE_TYPE_SNIFF_BYTES = 8192;
 
 export type FileKind =
@@ -68,17 +79,16 @@ export async function loadFileKindAndText(filePath: string): Promise<LoadedFile>
     }
 
     const sample = buffer.subarray(0, bytesRead);
-    const fileType = await fileTypeFromBuffer(sample);
-    if (fileType) {
-      if (IMAGE_MIME_TYPES.has(fileType.mime)) {
-        return { kind: "image", mimeType: fileType.mime };
+    const detectedMimeType = (await fileTypeFromBuffer(sample))?.mime;
+    if (detectedMimeType !== undefined && !isTextLikeMimeType(detectedMimeType)) {
+      if (IMAGE_MIME_TYPES.has(detectedMimeType)) {
+        return { kind: "image", mimeType: detectedMimeType };
       }
       return {
         kind: "binary",
-        description: fileType.mime,
+        description: detectedMimeType,
       };
     }
-
     if (hasNullByte(sample)) {
       return {
         kind: "binary",
