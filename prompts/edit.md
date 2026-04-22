@@ -1,31 +1,25 @@
-Patch a UTF-8 text file using `LINE#HASH` anchors copied from `read`.
+Patch a UTF-8 text file using `LINE#HASH` anchors copied verbatim from `read`.
 
-Use `read` first unless you are doing an unambiguous exact-text replacement with `replace_text`.
+Submit one `edit` call per file. All operations for that file go in a single `edits` array; anchors within one call must all come from the same pre-edit read.
 
-Submit one `edit` call per file and include all operations for that file in a single `edits` array.
+Ops:
+- `replace` — replace the line at `pos`, or the inclusive range `pos`..`end`, with `lines`.
+- `append` — insert `lines` after `pos`; omit `pos` to append at EOF.
+- `prepend` — insert `lines` before `pos`; omit `pos` to insert at BOF.
+- `replace_text` — replace the one exact unique occurrence of `oldText` with `newText`. Only when a match is guaranteed unique; otherwise read first and use anchors.
 
-Operations:
-- `replace`: replace the line at `pos`, or the inclusive range from `pos` through `end`, with `lines`
-- `append`: insert `lines` after `pos`; omit `pos` to append at end of file
-- `prepend`: insert `lines` before `pos`; omit `pos` to insert at start of file
-- `replace_text`: replace one exact unique `oldText` match with `newText`
-
-Minimal example:
+Example:
 ```json
-{
-  "path": "src/main.ts",
-  "edits": [
-    { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
-  ]
-}
+{ "path": "src/main.ts", "edits": [
+  { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
+] }
 ```
 
-Critical rules:
-- Copy anchors verbatim from `read`; do not guess, shift, or synthesize them.
-- `lines` must be literal file content. Do not include `LINE#HASH:` prefixes or diff markers like `+` or `-`.
-- All anchors in one call must come from the same pre-edit snapshot. Merge overlapping or adjacent edits.
-- `replace_text` must match exactly once. If it does not, re-read and switch to anchors.
+Rules:
+- `lines` is literal file content: no `LINE#HASH:` prefix, no leading `+`/`-`. Match indentation exactly.
+- Do not guess, shift, or construct anchors. Copy them from the most recent `read` of this file.
+- Do not emit overlapping or adjacent edits — merge them into one.
 
-`returnMode` is optional. `changed` (default) returns fresh anchors for the changed region when they fit the budget; otherwise it returns a short hint to `read` before continuing. If the file becomes empty, it returns the empty-file insertion hint instead. `full` and `ranges` return post-edit previews in `details`.
+On success (`changed` mode, default) the returned text is an `--- Anchors A-B ---` block with fresh `LINE#HASH` lines for the changed region. Use those for nearby follow-up edits in the same file without re-reading. For distant follow-ups, or on any error, call `read` again. `full` and `ranges` modes place previews in `details` for the host; the model still only needs what's in the text.
 
-If the edit succeeds, prefer the returned fresh anchors for nearby follow-up edits. If you hit stale-anchor or match errors, re-read and retry with current anchors or narrower text.
+Errors come back as text starting with a bracketed code (e.g. `[E_STALE_ANCHOR]`, `[E_INVALID_PATCH]`, `[E_NO_MATCH]`). The message is self-describing and tells you what to retry; stale-anchor errors include the current `>>> LINE#HASH:` lines, ready to copy.

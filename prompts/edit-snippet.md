@@ -1,1 +1,1 @@
-Patch text files using anchors copied verbatim from read
+Edit a text file via LINE#HASH anchors from read
