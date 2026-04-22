@@ -77,6 +77,19 @@ describe("classifyFileKind", () => {
     );
   });
 
+  it("classifies utf-16 xml as binary via the null-byte guard", async () => {
+    const xml = '<?xml version="1.0" encoding="utf-16"?>\n<LinearLayout />\n';
+    const utf16LeBom = Buffer.from([0xff, 0xfe]);
+    const utf16Xml = Buffer.concat([utf16LeBom, Buffer.from(xml, "utf16le")]);
+
+    await withTempBytes("layout-utf16.xml", utf16Xml, async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({
+        kind: "binary",
+        description: "null bytes detected",
+      });
+    });
+  });
+
   it("classifies recognized text/* MIME types as text", async () => {
     await withTempFile(
       "captions.vtt",
@@ -309,7 +322,9 @@ describe("file kind guards in tools", () => {
           { cwd } as any,
         );
 
-        expect(getText(result)).toContain("<LinearLayout");
+        const text = getText(result);
+        expect(text).toContain("<LinearLayout");
+        expect(text).not.toContain("Path is a binary file");
       },
     );
   });
