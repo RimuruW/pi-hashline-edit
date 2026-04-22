@@ -18,7 +18,7 @@ Use `read` first if you do not have current `LINE#HASH` references for the targe
 ```
 
 - `path` — target file path.
-- `returnMode` — optional. `changed` (default) returns a Changes summary, Updated anchors, and a compact diff preview. `full` and `ranges` return a structure outline; payloads land in `details.fullContent` / `details.returnedRanges`.
+- `returnMode` — optional. `changed` (default) returns a Changes summary plus fresh anchors for the changed region. `full` and `ranges` return a structure outline (when structural markers are found) and place payloads in `details.fullContent` / `details.returnedRanges`. The full diff is always available in `details.diff`.
 - `returnRanges` — required when `returnMode="ranges"`. Array of `{ "start": number, "end"?: number }` post-edit windows.
 - `edits` — array of edit operations.
 </payload>
@@ -72,6 +72,7 @@ Errors are returned as text prefixed with a stable code in brackets:
 <after-edit>
 A successful edit returns:
 - `Changes: +N -M` summary line.
-- `Updated anchors` — fresh `LINE#HASH` references for the changed region; usable in the next call without re-reading. Distant edits still need a fresh `read`.
-- `Diff preview` — compact diff. Suppressed when the response would otherwise exceed the text budget; the full diff stays in `details.diff`.
+- `--- Anchors A-B ---` block with fresh `LINE#HASH` references for the changed region; usable in the next call without re-reading. Distant edits still need a fresh `read`.
+
+The full unified diff lives in `details.diff`, not in the returned text. `full` and `ranges` modes also emit a `Structure outline:` block when the returned content contains recognisable markers (functions, classes, headings, …); when nothing structural is found the outline is omitted entirely.
 </after-edit>

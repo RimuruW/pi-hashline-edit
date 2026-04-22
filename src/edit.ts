@@ -300,7 +300,7 @@ export function assertEditRequest(request: unknown): asserts request is EditRequ
       if (!isRecord(range)) {
         throw new Error(`returnRanges[${index}] must be an object.`);
       }
-      if (!Number.isInteger(range.start) || range.start < 1) {
+      if (!Number.isInteger(range.start) || (range.start as number) < 1) {
         throw new Error(`returnRanges[${index}].start must be a positive integer.`);
       }
       if (hasOwn(range, "end")) {
@@ -523,8 +523,7 @@ function trimEdgeEmptyLines(lines: string[]): string[] {
 
 function isRenderedEditSectionBoundary(line: string): boolean {
   return (
-    line === "Diff preview:" ||
-    line.startsWith("--- Updated anchors") ||
+    line.startsWith("--- Anchors ") ||
     line === "Warnings:" ||
     line === "Structure outline:" ||
     /^--- Range \d+ /.test(line)
@@ -553,19 +552,7 @@ function formatRenderedEditResultMarkdown(
   while (index < shownLines.length) {
     const line = shownLines[index]!;
 
-    if (line === "Diff preview:") {
-      flushPlainLines();
-      index++;
-      const bodyLines: string[] = [];
-      while (index < shownLines.length && !isRenderedEditSectionBoundary(shownLines[index]!)) {
-        bodyLines.push(shownLines[index]!);
-        index++;
-      }
-      sections.push(["#### Diff preview", "```diff", ...trimEdgeEmptyLines(bodyLines), "```"].join("\n"));
-      continue;
-    }
-
-    if (line.startsWith("--- Updated anchors")) {
+    if (line.startsWith("--- Anchors ")) {
       flushPlainLines();
       const title = line.replace(/^---\s*/, "").replace(/\s*---$/, "");
       index++;
@@ -677,60 +664,41 @@ function truncateOutlineEntry(text: string, max = 88): string {
 
 function collectOutlineEntries(previewText: string): string[] {
   const structural: string[] = [];
-  const fallback: string[] = [];
-
   for (const line of previewText.split("\n")) {
     const match = line.match(/^(\d+)#[A-Z]{2}:(.*)$/);
-    if (!match) {
-      continue;
-    }
-    const lineNumber = match[1]!;
+    if (!match) continue;
     const content = match[2]!.trim();
-    if (content.length === 0) {
-      continue;
-    }
-    const entry = `${lineNumber}: ${truncateOutlineEntry(content.replace(/\s+/g, " "))}`;
-    if (STRUCTURE_MARKER_RE.test(content)) {
-      structural.push(entry);
-      continue;
-    }
-    if (fallback.length < 6) {
-      fallback.push(entry);
-    }
+    if (content.length === 0) continue;
+    if (!STRUCTURE_MARKER_RE.test(content)) continue;
+    structural.push(`${match[1]!}: ${truncateOutlineEntry(content.replace(/\s+/g, " "))}`);
   }
-
-  const entries = structural.length > 0 ? structural : fallback;
-  return entries.slice(0, 8);
+  return structural.slice(0, 8);
 }
 
 function buildStructureOutline(
   sections: Array<{ label?: string; previewText: string }>,
 ): { text: string; outline: string[] } {
-  const outlineLines = ["Structure outline:"];
+  const outlineLines: string[] = [];
   const detailOutline: string[] = [];
   const useSectionLabels = sections.length > 1;
 
   for (const section of sections) {
     const entries = collectOutlineEntries(section.previewText);
+    if (entries.length === 0) continue;
     if (useSectionLabels && section.label) {
       outlineLines.push(`- ${section.label}`);
     }
-
-    if (entries.length === 0) {
-      const fallback = "No structural markers found in returned content.";
-      outlineLines.push(useSectionLabels ? `  - ${fallback}` : `- ${fallback}`);
-      detailOutline.push(section.label ? `${section.label}: ${fallback}` : fallback);
-      continue;
-    }
-
     for (const entry of entries) {
       outlineLines.push(useSectionLabels ? `  - ${entry}` : `- ${entry}`);
       detailOutline.push(section.label ? `${section.label}: ${entry}` : entry);
     }
   }
 
+  if (outlineLines.length === 0) {
+    return { text: "", outline: [] };
+  }
   return {
-    text: outlineLines.join("\n"),
+    text: ["Structure outline:", ...outlineLines].join("\n"),
     outline: detailOutline,
   };
 }

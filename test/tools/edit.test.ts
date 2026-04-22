@@ -215,7 +215,7 @@ describe("registerEditTool", () => {
     }));
   });
 
-  it("renders diff preview and updated anchors inside fenced blocks", async () => {
+  it("renders anchors inside fenced blocks and keeps diff in details", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       registerEditTool(pi);
@@ -258,11 +258,12 @@ describe("registerEditTool", () => {
       const rendered = component.render(200).join("\n");
 
       expect(rendered).toContain("Updated sample.txt");
-      expect(rendered).toContain("```diff");
       expect(rendered).toContain("```text");
-      expect(rendered).toContain("[toolDiffRemoved]");
-      expect(rendered).toContain("[toolDiffAdded]");
-      expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
+      expect(rendered).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
+      // Diff preview no longer appears in LLM-visible text.
+      expect(rendered).not.toContain("```diff");
+      expect(rendered).not.toContain("Diff preview");
+      expect(result.details?.diff).toContain("+2");
     });
   });
 });

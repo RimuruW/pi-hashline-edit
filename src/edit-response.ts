@@ -10,10 +10,7 @@
  * — observability for hosts; the LLM-visible text is unchanged).
  */
 
-import {
-  buildCompactHashlineDiffPreview,
-  generateDiffString,
-} from "./edit-diff";
+import { generateDiffString } from "./edit-diff";
 
 // Local shape — pi-coding-agent does not export a public `ToolResult`. The
 // builders return `details` as `any` so callers can keep their own per-tool
@@ -99,10 +96,6 @@ type OutlineBuilder = (sections: StructureSection[]) => {
   outline: string[];
 };
 
-// Diff/anchor preview text budget. When the assembled changed-mode text
-// would exceed this, drop the diff preview from text (still in details.diff).
-export const RETURN_TEXT_BUDGET = 1500;
-
 // ─── Builder inputs ─────────────────────────────────────────────────────
 
 export interface NoopResponseInput {
@@ -147,6 +140,17 @@ function getVisibleLines(text: string): string[] {
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
 }
 
+function countDiffLines(diff: string, marker: "+" | "-"): number {
+  if (!diff) return 0;
+  let count = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith(marker) && !line.startsWith(`${marker}${marker}${marker}`)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function buildMetrics(args: {
   classification: "applied" | "noop";
   returnMode: ReturnMode;
@@ -180,6 +184,10 @@ function buildMetrics(args: {
 
 function warningsBlockOf(warnings: string[] | undefined): string {
   return warnings?.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
+}
+
+function outlineBlockOf(outlineText: string): string {
+  return outlineText ? `\n\n${outlineText}` : "";
 }
 
 // ─── Builders ───────────────────────────────────────────────────────────
@@ -231,9 +239,9 @@ export function buildNoopResponse(input: NoopResponseInput): ToolResult {
 
   const text =
     returnMode === "full"
-      ? `No changes made to ${path}\nClassification: noop\n\n${outline!.text}\n\nFull content is available in details.fullContent.`
+      ? `No changes made to ${path}\nClassification: noop${outlineBlockOf(outline!.text)}\n\nFull content is available in details.fullContent.`
       : returnMode === "ranges"
-        ? `No changes made to ${path}\nClassification: noop\n\n${outline!.text}\n\nRequested range payloads are available in details.returnedRanges.`
+        ? `No changes made to ${path}\nClassification: noop${outlineBlockOf(outline!.text)}\n\nRequested range payloads are available in details.returnedRanges.`
         : `No changes made to ${path}\nClassification: noop\n${noopDetailsText}`;
 
   const metrics = buildMetrics({
@@ -292,7 +300,7 @@ export function buildFullResponse(input: SuccessResponseInput): ToolResult {
   const diffResult = generateDiffString(originalNormalized, result);
   const fullPreview = formatHashlineReadPreview(result);
   const outline = buildStructureOutline([{ previewText: fullPreview.text }]);
-  const text = `Updated ${path}${warningsBlockOf(warnings)}\n\n${outline.text}\n\nFull content is available in details.fullContent.`;
+  const text = `Updated ${path}${warningsBlockOf(warnings)}${outlineBlockOf(outline.text)}\n\nFull content is available in details.fullContent.`;
 
   const metrics = buildMetrics({
     classification: "applied",
@@ -356,7 +364,7 @@ export function buildRangesResponse(input: SuccessResponseInput): ToolResult {
       previewText: range.text,
     })),
   );
-  const text = `Updated ${path}${warningsBlockOf(warnings)}\n\n${outline.text}\n\nRequested range payloads are available in details.returnedRanges.`;
+  const text = `Updated ${path}${warningsBlockOf(warnings)}${outlineBlockOf(outline.text)}\n\nRequested range payloads are available in details.returnedRanges.`;
 
   const metrics = buildMetrics({
     classification: "applied",
@@ -399,11 +407,9 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
   } = input;
 
   const diffResult = generateDiffString(originalNormalized, result);
-  const preview = buildCompactHashlineDiffPreview(diffResult.diff);
-  const summaryLine = `Changes: +${preview.addedLines} -${preview.removedLines}${preview.preview ? "" : " (no textual diff preview)"}`;
-  const previewBlock = preview.preview
-    ? `\n\nDiff preview:\n${preview.preview}`
-    : "";
+  const addedLines = countDiffLines(diffResult.diff, "+");
+  const removedLines = countDiffLines(diffResult.diff, "-");
+  const summaryLine = `Changes: +${addedLines} -${removedLines}`;
   const warningsBlock = warningsBlockOf(warnings);
 
   const resultLines = getVisibleLines(result);
@@ -416,15 +422,11 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
     ? (() => {
         const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
         const formatted = formatHashlineRegion(region, anchorRange.start);
-        return `\n\n--- Updated anchors (lines ${anchorRange.start}-${anchorRange.end}; use these for subsequent edits in this region, or read for distant edits) ---\n${formatted}`;
+        return `\n\n--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
       })()
     : "";
 
-  const fullText = `Updated ${path}\n${summaryLine}${anchorsBlock}${previewBlock}${warningsBlock}`;
-  const trimmedText =
-    fullText.length > RETURN_TEXT_BUDGET && previewBlock
-      ? `Updated ${path}\n${summaryLine}${anchorsBlock}${warningsBlock}\n\nDiff preview omitted (text budget ${RETURN_TEXT_BUDGET} exceeded; full diff in details.diff).`
-      : fullText;
+  const text = `Updated ${path}\n${summaryLine}${anchorsBlock}${warningsBlock}`;
 
   const metrics = buildMetrics({
     classification: "applied",
@@ -438,7 +440,7 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
   });
 
   return {
-    content: [{ type: "text", text: trimmedText }],
+    content: [{ type: "text", text }],
     details: {
       diff: diffResult.diff,
       firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,

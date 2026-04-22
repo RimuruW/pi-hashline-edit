@@ -26,7 +26,7 @@ describe("chained edit anchors", () => {
         ctx,
       );
 
-      expect(editResult.content[0].text).toContain("--- Updated anchors");
+      expect(editResult.content[0].text).toContain("--- Anchors");
       expect(editResult.content[0].text).toContain(":BETA");
 
       // Extract an anchor from the returned block and use it for a second edit.
@@ -84,7 +84,7 @@ describe("chained edit anchors", () => {
       );
 
       // Post-edit: 15 new lines + context > 12 budget → no anchors.
-      expect(editResult.content[0].text).not.toContain("--- Updated anchors");
+      expect(editResult.content[0].text).not.toContain("--- Anchors");
     });
   });
 
@@ -111,7 +111,7 @@ describe("chained edit anchors", () => {
         ctx,
       );
 
-      expect(editResult.content[0].text).toContain("--- Updated anchors");
+      expect(editResult.content[0].text).toContain("--- Anchors");
       expect(editResult.content[0].text).toContain(":appended");
     });
   });
@@ -132,12 +132,12 @@ describe("chained edit anchors", () => {
         ctx,
       );
 
-      expect(editResult.content[0].text).toContain("--- Updated anchors");
+      expect(editResult.content[0].text).toContain("--- Anchors");
       expect(editResult.content[0].text).toContain(":prepended");
     });
   });
 
-  it("does not leak terminal-newline sentinel in Updated anchors for append on newline-terminated file", async () => {
+  it("does not leak terminal-newline sentinel in anchors for append on newline-terminated file", async () => {
     await withTempFile("sentinel.ts", "existing\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
@@ -161,7 +161,7 @@ describe("chained edit anchors", () => {
       );
 
       // Should have anchors, but none should be an empty sentinel like "3#XX:"
-      expect(editResult.content[0].text).toContain("--- Updated anchors");
+      expect(editResult.content[0].text).toContain("--- Anchors");
       const anchorLines = editResult.content[0].text
         .split("\n")
         .filter((line: string) => line.match(/^\d+#\w{2}:.*/));
@@ -171,7 +171,7 @@ describe("chained edit anchors", () => {
     });
   });
 
-  it("omits Updated anchors when single-line replace expands beyond budget", async () => {
+  it("omits anchors when single-line replace expands beyond budget", async () => {
     // Replace 1 line with 11 new lines: span=11, +4 context = 15 > 12 budget.
     await withTempFile("expand.ts", "before\ntarget\nafter\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
@@ -197,7 +197,7 @@ describe("chained edit anchors", () => {
       );
 
       // 11 new lines span 2-12, +4 context = 15 > 12 → no anchors block.
-      expect(editResult.content[0].text).not.toContain("--- Updated anchors");
+      expect(editResult.content[0].text).not.toContain("--- Anchors");
     });
   });
 

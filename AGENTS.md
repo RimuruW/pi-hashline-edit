@@ -36,3 +36,8 @@
 - Do not bypass `src/fs-write.ts`; atomic writes are part of the extension’s safety guarantees.
 - Preserve stale-anchor rejection semantics unless the change explicitly redesigns the protocol.
 - Do not introduce autocorrection heuristics (e.g. stripping duplicate boundary lines, converting `\t` escape sequences) into `applyHashlineEdits`. The policy is strict semantics: the model must produce correct diffs; the runtime must not silently patch them.
+- Keep tool output token-efficient. `LINE#HASH:` already costs ~2 tokens per line, and `content[0].text` is repaid on every edit.
+  - `text` carries only what the model needs for its next step: updated anchors, `Changes: +N -M`, noop classification, stale-anchor retry hints, error codes.
+  - Full diffs, structural outlines, range payloads, snapshot fingerprints, metrics — host UI only, route to `details`.
+  - Never duplicate in `text` what anchors already express. No fallback outlines, no usage boilerplate, no verbose headers.
+  - New output fields default to `details`; moving one into `text` needs a justification beyond "the LLM might want it".
