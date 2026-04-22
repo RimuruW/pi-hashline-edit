@@ -324,9 +324,38 @@ describe("file kind guards in tools", () => {
 
         const text = getText(result);
         expect(text).toContain("<LinearLayout");
-        expect(text).not.toContain("Path is a binary file");
+        expect(text).not.toMatch(/binary file/i);
+        // Text path renders hashline-prefixed lines (e.g. "1#<hash>:<?xml ...").
+        expect(text).toMatch(/^\d+#[ZPMQVRWSNKTXJBYH]{2}:<\?xml/m);
       },
     );
+  });
+
+  it("read rejects utf-16 xml as binary because of null bytes", async () => {
+    const declaration = '<?xml version="1.0"?>\n<root/>\n';
+    const payload = Buffer.from(declaration, "utf16le");
+    const bytes = new Uint8Array(2 + payload.length);
+    // UTF-16 LE BOM: file-type still detects this as application/xml, so the
+    // regression guard relies on the null-byte check further down.
+    bytes[0] = 0xff;
+    bytes[1] = 0xfe;
+    bytes.set(payload, 2);
+
+    await withTempBytes("layout-utf16.xml", bytes, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      await expect(
+        readTool.execute(
+          "r1",
+          { path: "layout-utf16.xml" },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/binary file: layout-utf16\.xml \(null bytes detected\)/i);
+    });
   });
 
   it("read rejects binary files with classifier detail", async () => {
