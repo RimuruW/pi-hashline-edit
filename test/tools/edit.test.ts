@@ -216,7 +216,7 @@ describe("registerEditTool", () => {
     }));
   });
 
-  it("renders anchors inside fenced blocks and keeps diff in details", async () => {
+  it("renders details diff while keeping diff out of LLM-visible text", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       registerEditTool(pi);
@@ -259,17 +259,75 @@ describe("registerEditTool", () => {
       const rendered = component.render(200).join("\n");
 
       expect(rendered).toContain("Changes: +1 -1");
-      expect(rendered).toContain("```text");
-      expect(rendered).toContain(`2#${computeLineHash(2, "BBB")}:BBB`);
+      expect(rendered).toContain("```diff");
+      expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
       expect(rendered).not.toContain("Updated sample.txt");
-      // Diff preview no longer appears in LLM-visible text.
-      expect(rendered).not.toContain("```diff");
-      expect(rendered).not.toContain("Diff preview");
+      expect(rendered).not.toContain("```text");
+      // Diff preview stays out of LLM-visible text but is rendered for humans from details.diff.
+      expect(result.content[0].text).not.toContain("```diff");
       expect(result.details?.diff).toContain("+2");
     });
   });
 
-  it("clears redundant preview diff after a successful renderResult", async () => {
+  it("renders details diff when LLM-visible anchors are omitted", async () => {
+    const content = Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join("\n");
+    await withTempFile("sample.txt", `${content}\n`, async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      registerEditTool(pi);
+      const editTool = getTool("edit");
+      const editArgs = {
+        path: "sample.txt",
+        edits: [
+          {
+            op: "replace",
+            pos: `2#${computeLineHash(2, "line-2")}:line-2`,
+            lines: ["LINE-2"],
+          },
+          {
+            op: "replace",
+            pos: `25#${computeLineHash(25, "line-25")}:line-25`,
+            lines: ["LINE-25"],
+          },
+        ],
+      };
+
+      const result = await editTool.execute(
+        "e1",
+        editArgs,
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Anchors omitted; use read");
+      expect(result.content[0].text).not.toContain("LINE-25");
+
+      const component = editTool.renderResult(
+        result,
+        { expanded: false, isPartial: false },
+        {
+          bold: (text: string) => text,
+          fg: (_token: string, text: string) => text,
+        },
+        {
+          args: editArgs,
+          isError: false,
+          lastComponent: undefined,
+        } as any,
+      ) as { render: (width: number) => string[] };
+      const rendered = component.render(200).join("\n");
+
+      expect(rendered).toContain("Changes: +2 -2");
+      expect(rendered).toContain("```diff");
+      expect(rendered).toContain("+ 2#");
+      expect(rendered).toContain(":LINE-2");
+      expect(rendered).toContain("+25#");
+      expect(rendered).toContain(":LINE-25");
+      expect(rendered).not.toContain("Anchors omitted; use read");
+    });
+  });
+
+  it("does not synchronously invalidate while clearing a stale preview after result render", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       registerEditTool(pi);
@@ -350,7 +408,7 @@ describe("registerEditTool", () => {
 
       expect(resultRendered).toContain("Changes: +1 -1");
       expect((state as { preview?: unknown }).preview).toBeUndefined();
-      expect(invalidations).toBe(invalidationsBeforeResult + 1);
+      expect(invalidations).toBe(invalidationsBeforeResult);
 
       callContext.lastComponent = previewComponent;
       const postResultCall = editTool.renderCall(

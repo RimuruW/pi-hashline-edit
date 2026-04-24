@@ -513,20 +513,28 @@ function getRenderedEditTextContent(
 function buildUiRenderedEditText(
   text: string | undefined,
   details: HashlineEditToolDetails | undefined,
+  options: { showDiffForAppliedChanged?: boolean } = {},
 ): string | undefined {
   const sections: string[] = [];
   const metrics = details?.metrics;
-  if (
+  const isAppliedChanged =
     metrics?.classification === "applied" &&
     metrics.return_mode === "changed" &&
     metrics.added_lines !== undefined &&
-    metrics.removed_lines !== undefined
-  ) {
+    metrics.removed_lines !== undefined;
+
+  if (isAppliedChanged) {
     sections.push(`Changes: +${metrics.added_lines} -${metrics.removed_lines}`);
   }
-  if (text && text.length > 0) {
+
+  if (isAppliedChanged && options.showDiffForAppliedChanged && details?.diff) {
+    sections.push(["Diff preview:", "```diff", details.diff, "```"].join("\n"));
+    const warnings = text?.match(/(?:^|\n)Warnings:\n[\s\S]*$/)?.[0]?.trimStart();
+    if (warnings) sections.push(warnings);
+  } else if (text && text.length > 0) {
     sections.push(text);
   }
+
   return sections.length > 0 ? sections.join("\n\n") : undefined;
 }
 
@@ -554,13 +562,8 @@ function isRenderedEditSectionBoundary(line: string): boolean {
   );
 }
 
-function formatRenderedEditResultMarkdown(
-  text: string,
-  options: { expanded: boolean },
-): string {
+function formatRenderedEditResultMarkdown(text: string): string {
   const lines = text.split("\n");
-  const maxLines = options.expanded ? 60 : 20;
-  const shownLines = lines.slice(0, maxLines);
   const sections: string[] = [];
   let plainLines: string[] = [];
 
@@ -573,16 +576,16 @@ function formatRenderedEditResultMarkdown(
   };
 
   let index = 0;
-  while (index < shownLines.length) {
-    const line = shownLines[index]!;
+  while (index < lines.length) {
+    const line = lines[index]!;
 
     if (line.startsWith("--- Anchors ")) {
       flushPlainLines();
       const title = line.replace(/^---\s*/, "").replace(/\s*---$/, "");
       index++;
       const bodyLines: string[] = [];
-      while (index < shownLines.length && !isRenderedEditSectionBoundary(shownLines[index]!)) {
-        bodyLines.push(shownLines[index]!);
+      while (index < lines.length && !isRenderedEditSectionBoundary(lines[index]!)) {
+        bodyLines.push(lines[index]!);
         index++;
       }
       sections.push([`#### ${title}`, "```text", ...trimEdgeEmptyLines(bodyLines), "```"].join("\n"));
@@ -594,10 +597,6 @@ function formatRenderedEditResultMarkdown(
   }
 
   flushPlainLines();
-
-  if (lines.length > maxLines) {
-    sections.push(`... ${lines.length - maxLines} more result lines`);
-  }
 
   return sections.join("\n\n");
 }
@@ -852,7 +851,11 @@ export function registerEditTool(pi: ExtensionAPI): void {
     renderShell: "default",
     renderCall(args, theme, context) {
       const previewInput = getRenderablePreviewInput(args);
-      if (!context.argsComplete || !previewInput) {
+      if (context.executionStarted) {
+        context.state.argsKey = undefined;
+        context.state.preview = undefined;
+        context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
+      } else if (!context.argsComplete || !previewInput) {
         context.state.argsKey = undefined;
         context.state.preview = undefined;
         context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
@@ -913,12 +916,8 @@ export function registerEditTool(pi: ExtensionAPI): void {
 
       const renderState = context.state as EditRenderState | undefined;
       if (renderState) {
-        const hadPreview = renderState.preview !== undefined;
         renderState.preview = undefined;
         renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
-        if (hadPreview) {
-          context.invalidate();
-        }
       }
 
       if (context.isError) {
@@ -935,6 +934,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
       const uiRenderedText = buildUiRenderedEditText(
         renderedText,
         typedResult.details,
+        { showDiffForAppliedChanged: true },
       );
       if (!uiRenderedText) {
         return new Text("", 0, 0);
@@ -943,9 +943,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
       const markdown = context.lastComponent instanceof Markdown
         ? context.lastComponent
         : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
-      markdown.setText(
-        formatRenderedEditResultMarkdown(uiRenderedText, { expanded }),
-      );
+      markdown.setText(formatRenderedEditResultMarkdown(uiRenderedText));
       return markdown;
     },
 
