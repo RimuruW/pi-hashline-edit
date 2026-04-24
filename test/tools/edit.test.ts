@@ -258,13 +258,13 @@ describe("registerEditTool", () => {
 
       const rendered = component.render(200).join("\n");
 
-      expect(rendered).toContain("Changes: +1 -1");
-      expect(rendered).toContain("```diff");
+      expect(rendered).not.toContain("Changes: +1 -1");
+      expect(rendered).not.toContain("Diff preview:");
+      expect(rendered).not.toContain("```diff");
       expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
       expect(rendered).not.toContain("Updated sample.txt");
       expect(rendered).not.toContain("```text");
       // Diff preview stays out of LLM-visible text but is rendered for humans from details.diff.
-      expect(result.content[0].text).not.toContain("```diff");
       expect(result.details?.diff).toContain("+2");
     });
   });
@@ -317,8 +317,9 @@ describe("registerEditTool", () => {
       ) as { render: (width: number) => string[] };
       const rendered = component.render(200).join("\n");
 
-      expect(rendered).toContain("Changes: +2 -2");
-      expect(rendered).toContain("```diff");
+      expect(rendered).not.toContain("Changes: +2 -2");
+      expect(rendered).not.toContain("Diff preview:");
+      expect(rendered).not.toContain("```diff");
       expect(rendered).toContain("+ 2#");
       expect(rendered).toContain(":LINE-2");
       expect(rendered).toContain("+25#");
@@ -406,7 +407,8 @@ describe("registerEditTool", () => {
       ) as { render: (width: number) => string[] };
       const resultRendered = resultComponent.render(200).join("\n");
 
-      expect(resultRendered).toContain("Changes: +1 -1");
+      expect(resultRendered).not.toContain("Changes: +1 -1");
+      expect(resultRendered).not.toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
       expect((state as { preview?: unknown }).preview).toBeUndefined();
       expect(invalidations).toBe(invalidationsBeforeResult);
 

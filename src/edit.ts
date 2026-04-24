@@ -477,14 +477,11 @@ function getRenderablePreviewInput(args: unknown): EditRequestParams | null {
   return hasAnyEditPayload ? request : null;
 }
 
-function formatPreviewDiff(
-  diff: string,
-  expanded: boolean,
+function colorDiffLines(
+  lines: string[],
   theme: { fg: (token: string, text: string) => string },
-): string {
-  const lines = diff.split("\n");
-  const maxLines = expanded ? 40 : 16;
-  const shown = lines.slice(0, maxLines).map((line) => {
+): string[] {
+  return lines.map((line) => {
     if (line.startsWith("+") && !line.startsWith("+++")) {
       return theme.fg("success", line);
     }
@@ -493,11 +490,28 @@ function formatPreviewDiff(
     }
     return theme.fg("dim", line);
   });
+}
+
+function formatPreviewDiff(
+  diff: string,
+  expanded: boolean,
+  theme: { fg: (token: string, text: string) => string },
+): string {
+  const lines = diff.split("\n");
+  const maxLines = expanded ? 40 : 16;
+  const shown = colorDiffLines(lines.slice(0, maxLines), theme);
 
   if (lines.length > maxLines) {
     shown.push(theme.fg("muted", `... ${lines.length - maxLines} more diff lines`));
   }
   return shown.join("\n");
+}
+
+function formatResultDiff(
+  diff: string,
+  theme: { fg: (token: string, text: string) => string },
+): string {
+  return colorDiffLines(diff.split("\n"), theme).join("\n");
 }
 
 function getRenderedEditTextContent(
@@ -510,30 +524,37 @@ function getRenderedEditTextContent(
   return textContent?.text;
 }
 
-function buildUiRenderedEditText(
-  text: string | undefined,
+function extractRenderedWarnings(text: string | undefined): string | undefined {
+  return text?.match(/(?:^|\n)Warnings:\n[\s\S]*$/)?.[0]?.trimStart();
+}
+
+function isAppliedChangedResult(
   details: HashlineEditToolDetails | undefined,
-  options: { showDiffForAppliedChanged?: boolean } = {},
-): string | undefined {
-  const sections: string[] = [];
+): boolean {
   const metrics = details?.metrics;
-  const isAppliedChanged =
+  return (
     metrics?.classification === "applied" &&
     metrics.return_mode === "changed" &&
     metrics.added_lines !== undefined &&
-    metrics.removed_lines !== undefined;
+    metrics.removed_lines !== undefined
+  );
+}
 
-  if (isAppliedChanged) {
-    sections.push(`Changes: +${metrics.added_lines} -${metrics.removed_lines}`);
+function buildAppliedChangedResultText(
+  text: string | undefined,
+  details: HashlineEditToolDetails | undefined,
+  preview: EditPreview | undefined,
+  theme: { fg: (token: string, text: string) => string },
+): string | undefined {
+  const previewDiff = preview && !("error" in preview) ? preview.diff : undefined;
+  const sections: string[] = [];
+
+  if (details?.diff && details.diff !== previewDiff) {
+    sections.push(formatResultDiff(details.diff, theme));
   }
 
-  if (isAppliedChanged && options.showDiffForAppliedChanged && details?.diff) {
-    sections.push(["Diff preview:", "```diff", details.diff, "```"].join("\n"));
-    const warnings = text?.match(/(?:^|\n)Warnings:\n[\s\S]*$/)?.[0]?.trimStart();
-    if (warnings) sections.push(warnings);
-  } else if (text && text.length > 0) {
-    sections.push(text);
-  }
+  const warnings = extractRenderedWarnings(text);
+  if (warnings) sections.push(warnings);
 
   return sections.length > 0 ? sections.join("\n\n") : undefined;
 }
@@ -901,7 +922,7 @@ export function registerEditTool(pi: ExtensionAPI): void {
       return text;
     },
 
-    renderResult(result, { expanded, isPartial }, theme, context) {
+    renderResult(result, { isPartial }, theme, context) {
       if (isPartial) {
         const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
         text.setText(theme.fg("warning", "Editing..."));
@@ -909,12 +930,13 @@ export function registerEditTool(pi: ExtensionAPI): void {
       }
 
       const typedResult = result as {
-        content?: Array<{ type: string; text?: string }> ;
+        content?: Array<{ type: string; text?: string }>;
         details?: HashlineEditToolDetails;
       };
       const renderedText = getRenderedEditTextContent(typedResult);
 
       const renderState = context.state as EditRenderState | undefined;
+      const previewBeforeResult = renderState?.preview;
       if (renderState) {
         renderState.preview = undefined;
         renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
@@ -931,19 +953,31 @@ export function registerEditTool(pi: ExtensionAPI): void {
         return text;
       }
 
-      const uiRenderedText = buildUiRenderedEditText(
-        renderedText,
-        typedResult.details,
-        { showDiffForAppliedChanged: true },
-      );
-      if (!uiRenderedText) {
+      if (isAppliedChangedResult(typedResult.details)) {
+        const appliedChangedText = buildAppliedChangedResultText(
+          renderedText,
+          typedResult.details,
+          previewBeforeResult,
+          theme,
+        );
+        if (!appliedChangedText) {
+          return new Text("", 0, 0);
+        }
+        const text = context.lastComponent instanceof Text
+          ? context.lastComponent
+          : new Text("", 0, 0);
+        text.setText(appliedChangedText);
+        return text;
+      }
+
+      if (!renderedText) {
         return new Text("", 0, 0);
       }
 
       const markdown = context.lastComponent instanceof Markdown
         ? context.lastComponent
         : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
-      markdown.setText(formatRenderedEditResultMarkdown(uiRenderedText));
+      markdown.setText(formatRenderedEditResultMarkdown(renderedText));
       return markdown;
     },
 

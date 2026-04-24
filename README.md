@@ -22,13 +22,12 @@ pi install /path/to/pi-hashline-edit
 
 ### `read` — tagged line output
 
-Text files are returned with a `LINE#HASH:` prefix on every line and include a `snapshotId` footer/details payload for the edit loop:
+Text files are returned with a `LINE#HASH:` prefix on every line:
+
 ```text
 10#VR:function hello() {
 11#KT:  console.log("world");
 12#BH:}
-
-[snapshotId: v1|/abs/path|...]
 ```
 
 - `LINE` — 1-indexed line number.
@@ -38,7 +37,7 @@ Optional parameters:
 - `offset` — start reading from this line number (1-indexed).
 - `limit` — maximum number of lines to return.
 
-Images (JPEG, PNG, GIF, WebP) are passed through as attachments and do not participate in the hashline/snapshot protocol. Binary and directory paths are rejected with a descriptive error. Empty files return an advisory instead of a synthetic anchor.
+Images (JPEG, PNG, GIF, WebP) are passed through as attachments and do not participate in the hashline protocol. Binary and directory paths are rejected with a descriptive error. Empty files return an advisory suggesting `prepend`/`append` instead of a synthetic anchor.
 
 ### `edit` — hash-anchored modifications
 
@@ -58,6 +57,7 @@ Edits use the `LINE#HASH` anchors from `read` output to target lines precisely:
 | `replace` | Replace one line (`pos`) or an inclusive range (`pos` + `end`). | `pos` required, `end` optional, `lines` |
 | `append` | Insert lines after `pos`. Omit `pos` to append at EOF. | `pos` optional, `lines` |
 | `prepend` | Insert lines before `pos`. Omit `pos` to prepend at BOF. | `pos` optional, `lines` |
+| `replace_text` | Replace an exact unique substring anywhere in the file. Fails if the text is not found or matches more than once. | `oldText`, `newText` |
 
 All edits in a single call validate against the same pre-edit snapshot and apply bottom-up, so line numbers stay consistent across operations.
 
@@ -71,11 +71,11 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 
 ## Design Decisions
 
-- **Stale anchors fail.** A hash mismatch means the file has changed since the last `read`. The error includes a snippet with fresh `LINE#HASH` references for retry.
+- **Stale anchors fail.** A hash mismatch means the file has changed since the last `read`. The error includes a snippet with fresh `LINE#HASH` references for the affected lines for immediate retry.
 - **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
+- **Strict patch content.** If `lines` contains `LINE#HASH:` display prefixes or diff `+`/`-` markers, the edit is rejected with `[E_INVALID_PATCH]`. The model must send literal file content; the runtime does not silently strip accidental prefixes.
 - **Hidden legacy compatibility.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the tool attempts an exact unique match. Usage is surfaced to the interactive UI so the operator can see that the model isn't using hashline mode.
-- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place. Hard-linked files are written atomically as well; this breaks the hard link, leaving the other names pointing to the original content.
-- **Display prefix stripping.** If the model accidentally pastes `LINE#HASH:` prefixes or diff `+`/`-` markers into replacement content, they are detected and stripped automatically.
+- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place. File permissions are preserved across the rename.
 - **Per-file mutation queue.** Edits queue by the canonical write target, so concurrent edits through different symlink paths still serialize onto the same underlying file.
 
 ## Hashing
