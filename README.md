@@ -75,7 +75,7 @@ Each edit result includes a compact `Diff preview:` block showing the changed li
 - **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
 - **Strict patch content.** If `lines` contains `LINE#HASH:` display prefixes or diff `+`/`-` markers, the edit is rejected with `[E_INVALID_PATCH]`. The model must send literal file content; the runtime does not silently strip accidental prefixes.
 - **Hidden legacy compatibility.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the tool attempts an exact unique match. Usage is surfaced to the interactive UI so the operator can see that the model isn't using hashline mode.
-- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated in place. File permissions are preserved across the rename.
+- **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated without replacing the symlink. Hard-linked files are updated in place to preserve the shared inode. File permissions are preserved across atomic renames.
 - **Per-file mutation queue.** Edits queue by the canonical write target, so concurrent edits through different symlink paths still serialize onto the same underlying file.
 
 ## Hashing
