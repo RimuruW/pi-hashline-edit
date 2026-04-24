@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.6.0] - 2026-04-24
+
+### Added
+
+- Add first-class `replace_text` edits.
+- Add full and ranges return modes for edit previews.
+- Add protocol metadata for snapshot validation, outlines, stale refresh anchors, and edit metrics.
+
+### Fixed
+
+- Preserve hard links during atomic writes.
+- Canonicalize mutation targets across aliases.
+- Render applied edit diffs in the UI only while keeping model-visible responses compact.
+- Preserve legacy payload compatibility and fenced result sections.
+- Tighten range and snapshot metadata handling.
+
+### Changed
+
+- Slim read/edit prompt guidance and edit response text for token efficiency.
+- Drop snapshot ID rejection and silent autocorrection behavior from the protocol.
+- Improve text-like MIME handling, including XML candidates.
+
+### Tests
+
+- Expand file-kind coverage for XML read guard paths and harden related test coverage.
+
 ## [0.5.4] - 2026-04-19
 
 ### Fixed
