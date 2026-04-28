@@ -78,6 +78,10 @@ export const hashlineEditToolSchema = Type.Object(
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     ),
+    oldText: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer edits[].oldText with op replace_text." })),
+    newText: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer edits[].newText with op replace_text." })),
+    old_text: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer oldText or edits[].oldText." })),
+    new_text: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer newText or edits[].newText." })),
   },
   { additionalProperties: false },
 );
@@ -193,70 +197,6 @@ function getVisibleLines(text: string): string[] {
   }
   const lines = text.split("\n");
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
-}
-
-
-function withHiddenStringProperty(
-  target: Record<string, unknown>,
-  key: typeof LEGACY_KEYS[number],
-  value: string,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-}
-
-/**
- * Normalise raw tool-call arguments before validation and execution.
- *
- * In newer pi runtimes this is registered as `prepareArguments` so it runs
- * before schema validation, letting old-session payloads with top-level
- * `oldText/newText` continue to work without exposing those fields in the
- * public tool schema.
- *
- * The legacy fields are stored as non-enumerable properties so they pass
- * through `Object.keys()` and `JSON.stringify()` silently while still being
- * accessible to `assertEditRequest` and `extractLegacyTopLevelReplace`.
- */
-export function prepareEditArguments(args: unknown): unknown {
-  if (!isRecord(args)) {
-    return args;
-  }
-
-  const hasAnyLegacyKey = LEGACY_KEYS.some((key) => hasOwn(args, key));
-  if (!hasAnyLegacyKey) {
-    return args;
-  }
-
-  const prepared: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    if (!LEGACY_KEYS.includes(key as typeof LEGACY_KEYS[number])) {
-      prepared[key] = value;
-    }
-  }
-
-  for (const legacyKey of LEGACY_KEYS) {
-    if (!hasOwn(args, legacyKey)) continue;
-    const value = args[legacyKey];
-    if (typeof value === "string") {
-      withHiddenStringProperty(prepared, legacyKey, value);
-    } else {
-      // Preserve non-string legacy values as non-enumerable so
-      // assertEditRequest can reject them with a clear type error
-      // instead of silently dropping them.
-      Object.defineProperty(prepared, legacyKey, {
-        value,
-        enumerable: false,
-        configurable: true,
-        writable: true,
-      });
-    }
-  }
-
-  return prepared;
 }
 
 // Intentional overlap with the published TypeBox schema:
@@ -782,14 +722,13 @@ export async function computeEditPreview(
   request: unknown,
   cwd: string,
 ): Promise<EditPreview> {
-  const preparedRequest = prepareEditArguments(request);
   try {
-    assertEditRequest(preparedRequest);
+    assertEditRequest(request);
   } catch (error: unknown) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
 
-  const params = preparedRequest as EditRequestParams;
+  const params = request as EditRequestParams;
   const path = params.path;
   const absolutePath = resolveToCwd(path, cwd);
   const toolEdits = Array.isArray(params.edits) ? params.edits : [];
@@ -864,7 +803,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
     label: "Edit",
     description: EDIT_DESC,
     parameters: hashlineEditToolSchema,
-    prepareArguments: prepareEditArguments,
     promptSnippet: EDIT_PROMPT_SNIPPET,
     // Force the default tool shell (Box with pending/success/error background) so
     // we don't inherit renderShell: "self" from the built-in edit tool of the
