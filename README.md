@@ -88,11 +88,11 @@ Lines that contain no alphanumeric characters (e.g. a lone `}`) use their line n
 
 ## Development
 
-Requires [Bun](https://bun.sh).
+Requires [Node.js](https://nodejs.org) and npm.
 
 ```bash
-bun install
-bun test
+npm install
+npm test
 ```
 
 Set `PI_HASHLINE_DEBUG=1` to show an "active" notification at session start.

@@ -112,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Verification
 
 - Added regression tests for top-level schema publication and EOF append behavior.
-- `bun test` passes (181 tests).
+- `npm test` passes (181 tests).
 
 
 ## [0.4.0] - 2026-03-23
@@ -146,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Edit tool is strict hashline-only by default.** Free-text relocation (`replace` by scanning for matching content) has been removed. All edits use `LINE#HASH` anchors; the legacy `oldText`/`newText` path is a hidden compatibility fallback, not a documented mode.
 - **`read` output is hashline-only.** The tool no longer supports non-hashline output modes.
 - **Test suite reorganized** into layered directories: `test/core/` for hashline primitives, `test/tools/` for tool behavior, `test/extension/` for registration and notifications, `test/integration/` for end-to-end flows.
-- **Migrated from npm to Bun.** `package-lock.json` has been replaced with `bun.lock`; all development commands use `bun`.
+- **Migrated from npm to Bun.** `package-lock.json` was replaced with `bun.lock`; all development commands used `bun`. (Reverted in 0.7.0: migrated back to npm + vitest.)
 
 ### Removed
 
