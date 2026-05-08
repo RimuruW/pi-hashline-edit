@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { writeFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import Ajv from "ajv";
 import {
   assertEditRequest,
   hashlineEditToolSchema,
-  prepareEditArguments,
   registerEditTool,
 } from "../../src/edit";
 import { computeLineHash } from "../../src/hashline";
@@ -17,13 +16,13 @@ describe("assertEditRequest", () => {
     ).toThrow(/unknown or unsupported fields/i);
   });
 
-  it("accepts hidden complete legacy replace fields when edits is absent", () => {
+  it("accepts complete legacy replace fields when edits is absent", () => {
     expect(() =>
       assertEditRequest({
         path: "a.ts",
         oldText: "before",
         newText: "after",
-      } as any),
+      }),
     ).not.toThrow();
   });
 
@@ -43,7 +42,7 @@ describe("assertEditRequest", () => {
     ).toThrow(/cannot mix legacy camelCase and snake_case/i);
   });
 
-  it("still reports mixed legacy-key semantics explicitly after schema tightening", () => {
+  it("lets assertEditRequest report mixed legacy-key semantics after schema validation", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
     const payload = {
@@ -53,7 +52,7 @@ describe("assertEditRequest", () => {
       new_text: "after",
     };
 
-    expect(validate(payload)).toBe(false);
+    expect(validate(payload)).toBe(true);
     expect(() => assertEditRequest(payload as any)).toThrow(
       /cannot mix legacy camelCase and snake_case/i,
     );
@@ -77,15 +76,14 @@ describe("assertEditRequest", () => {
     ).toThrow(/requires a "pos" anchor string/i);
   });
 
-  it("rejects non-string legacy key values after prepareEditArguments normalization", () => {
-    const prepared = prepareEditArguments({
-      path: "a.ts",
-      edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-      oldText: 123,
-    });
-    expect(() => assertEditRequest(prepared)).toThrow(
-      /must be a string/i,
-    );
+  it("rejects non-string legacy key values", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        oldText: 123,
+      } as any),
+    ).toThrow(/must be a string/i);
   });
 });
 
@@ -123,7 +121,7 @@ describe("registerEditTool", () => {
     ).toBe(true);
   });
 
-  it("publishes a schema that rejects top-level camelCase legacy payloads", () => {
+  it("publishes a schema that validates top-level camelCase legacy payloads", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -133,10 +131,10 @@ describe("registerEditTool", () => {
         oldText: "before",
         newText: "after",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("publishes a schema that rejects top-level snake_case legacy payloads", () => {
+  it("publishes a schema that validates top-level snake_case legacy payloads", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -146,10 +144,10 @@ describe("registerEditTool", () => {
         old_text: "before",
         new_text: "after",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("publishes a schema that rejects strict edits mixed with top-level legacy fields", () => {
+  it("publishes a schema that validates strict edits mixed with top-level legacy fields", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
@@ -160,7 +158,7 @@ describe("registerEditTool", () => {
         oldText: "before",
         newText: "after",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("publishes a top-level object schema for pi tool registration", () => {
@@ -168,22 +166,23 @@ describe("registerEditTool", () => {
     expect((hashlineEditToolSchema as any).anyOf).toBeUndefined();
   });
 
-  it("prepareEditArguments hides legacy top-level fields while keeping execute compatibility", () => {
+  it("keeps legacy top-level fields enumerable and visible through structuredClone", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
-    const prepared = prepareEditArguments({
+    const payload = {
       path: "a.ts",
       oldText: "before",
       newText: "after",
-    }) as Record<string, unknown>;
+    };
+    const cloned = structuredClone(payload);
 
-    expect(validate(prepared)).toBe(true);
-    expect(prepared.oldText).toBe("before");
-    expect(prepared.newText).toBe("after");
-    expect(Object.keys(prepared)).toEqual(["path"]);
+    expect(validate(cloned)).toBe(true);
+    expect(cloned.oldText).toBe("before");
+    expect(cloned.newText).toBe("after");
+    expect(Object.keys(cloned)).toEqual(["path", "oldText", "newText"]);
   });
 
-  it("registers prepareArguments so new pi runtimes can normalize resumed legacy calls before validation", () => {
+  it("registers the edit tool without a prepareArguments compatibility shim", () => {
     let registered:
       | {
           parameters?: any;
@@ -202,18 +201,35 @@ describe("registerEditTool", () => {
     registerEditTool(pi);
 
     expect(registered?.parameters).toEqual(hashlineEditToolSchema);
-    expect(typeof registered?.prepareArguments).toBe("function");
-    expect(
-      (registered?.prepareArguments as (args: unknown) => unknown)({
-        path: "a.ts",
-        oldText: "before",
-        newText: "after",
-      }),
-    ).toEqual(prepareEditArguments({
-      path: "a.ts",
-      oldText: "before",
-      newText: "after",
-    }));
+    expect(registered?.prepareArguments).toBeUndefined();
+  });
+
+  it("executes fuzzy legacy top-level replace through the compatibility path", async () => {
+    await withTempFile("legacy.txt", "alpha\nconsole.log(\"hi\")\nomega\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      registerEditTool(pi);
+      const editTool = getTool("edit");
+
+      const result = await editTool.execute(
+        "legacy-1",
+        {
+          path: "legacy.txt",
+          oldText: "console.log(\"hi\")",
+          newText: "console.log(\"bye\")",
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(await readFile(path, "utf-8")).toBe("alpha\nconsole.log(\"bye\")\nomega\n");
+      expect(result.details?.compatibility).toMatchObject({
+        used: true,
+        strategy: "legacy-top-level-replace",
+        matchCount: 1,
+      });
+      expect(result.details?.metrics?.legacy_replace).toBe(true);
+    });
   });
 
   it("renders details diff while keeping diff out of LLM-visible text", async () => {
@@ -264,418 +280,7 @@ describe("registerEditTool", () => {
       expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
       expect(rendered).not.toContain("Updated sample.txt");
       expect(rendered).not.toContain("```text");
-      // Diff preview stays out of LLM-visible text but is rendered for humans from details.diff.
       expect(result.details?.diff).toContain("+2");
-    });
-  });
-
-  it("renders details diff when LLM-visible anchors are omitted", async () => {
-    const content = Array.from({ length: 30 }, (_, index) => `line-${index + 1}`).join("\n");
-    await withTempFile("sample.txt", `${content}\n`, async ({ cwd }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-      const editArgs = {
-        path: "sample.txt",
-        edits: [
-          {
-            op: "replace",
-            pos: `2#${computeLineHash(2, "line-2")}:line-2`,
-            lines: ["LINE-2"],
-          },
-          {
-            op: "replace",
-            pos: `25#${computeLineHash(25, "line-25")}:line-25`,
-            lines: ["LINE-25"],
-          },
-        ],
-      };
-
-      const result = await editTool.execute(
-        "e1",
-        editArgs,
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-
-      expect(result.content[0].text).toContain("Anchors omitted; use read");
-      expect(result.content[0].text).not.toContain("LINE-25");
-
-      const component = editTool.renderResult(
-        result,
-        { expanded: false, isPartial: false },
-        {
-          bold: (text: string) => text,
-          fg: (_token: string, text: string) => text,
-        },
-        {
-          args: editArgs,
-          isError: false,
-          lastComponent: undefined,
-        } as any,
-      ) as { render: (width: number) => string[] };
-      const rendered = component.render(200).join("\n");
-
-      expect(rendered).not.toContain("Changes: +2 -2");
-      expect(rendered).not.toContain("Diff preview:");
-      expect(rendered).not.toContain("```diff");
-      expect(rendered).toContain("+ 2#");
-      expect(rendered).toContain(":LINE-2");
-      expect(rendered).toContain("+25#");
-      expect(rendered).toContain(":LINE-25");
-      expect(rendered).not.toContain("Anchors omitted; use read");
-    });
-  });
-
-  it("does not synchronously invalidate while clearing a stale preview after result render", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-      const editArgs = {
-        path: "sample.txt",
-        edits: [
-          {
-            op: "replace",
-            pos: `2#${computeLineHash(2, "bbb")}:bbb`,
-            lines: ["BBB"],
-          },
-        ],
-      };
-      const theme = {
-        bold: (text: string) => text,
-        fg: (_token: string, text: string) => text,
-      };
-      const state: Record<string, unknown> = {};
-      let invalidations = 0;
-      const callContext = {
-        argsComplete: true,
-        state,
-        cwd,
-        expanded: false,
-        lastComponent: undefined,
-        invalidate() {
-          invalidations += 1;
-        },
-      } as any;
-
-      const callComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      callContext.lastComponent = callComponent;
-
-      const deadline = Date.now() + 2_000;
-      while (!(state as { preview?: unknown }).preview) {
-        if (Date.now() > deadline) {
-          throw new Error("timed out waiting for edit preview");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-
-      const previewComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      const previewRendered = previewComponent.render(200).join("\n");
-      expect(previewRendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
-
-      const result = await editTool.execute(
-        "e1",
-        editArgs,
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      const invalidationsBeforeResult = invalidations;
-      const resultComponent = editTool.renderResult(
-        result,
-        { expanded: false, isPartial: false },
-        theme,
-        {
-          args: editArgs,
-          state,
-          isError: false,
-          lastComponent: undefined,
-          invalidate() {
-            invalidations += 1;
-          },
-        } as any,
-      ) as { render: (width: number) => string[] };
-      const resultRendered = resultComponent.render(200).join("\n");
-
-      expect(resultRendered).not.toContain("Changes: +1 -1");
-      expect(resultRendered).not.toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
-      expect((state as { preview?: unknown }).preview).toBeUndefined();
-      expect(invalidations).toBe(invalidationsBeforeResult);
-
-      callContext.lastComponent = previewComponent;
-      const postResultCall = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      const postResultRendered = postResultCall.render(200).join("\n");
-      expect(postResultRendered).not.toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
-    });
-  });
-
-  it("clears a noop preview after the settled noop result renders", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-      const editArgs = {
-        path: "sample.txt",
-        edits: [
-          {
-            op: "replace",
-            pos: `2#${computeLineHash(2, "bbb")}:bbb`,
-            lines: ["bbb"],
-          },
-        ],
-      };
-      const theme = {
-        bold: (text: string) => text,
-        fg: (_token: string, text: string) => text,
-      };
-      const state: Record<string, unknown> = {};
-      const callContext = {
-        argsComplete: true,
-        state,
-        cwd,
-        expanded: false,
-        lastComponent: undefined,
-        invalidate() {},
-      } as any;
-
-      const callComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      callContext.lastComponent = callComponent;
-
-      const deadline = Date.now() + 2_000;
-      while (!(state as { preview?: unknown }).preview) {
-        if (Date.now() > deadline) {
-          throw new Error("timed out waiting for noop preview");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-
-      const previewComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(previewComponent.render(200).join("\n")).toContain("No changes made");
-
-      const result = await editTool.execute(
-        "e1",
-        editArgs,
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      editTool.renderResult(
-        result,
-        { expanded: false, isPartial: false },
-        theme,
-        {
-          args: editArgs,
-          state,
-          isError: false,
-          lastComponent: undefined,
-          invalidate() {},
-        } as any,
-      );
-
-      expect((state as { preview?: unknown }).preview).toBeUndefined();
-      callContext.lastComponent = previewComponent;
-      const postResultCall = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(postResultCall.render(200).join("\n")).not.toContain("No changes made");
-    });
-  });
-
-  it("clears a stale preview after success even when the actual diff changed on disk", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-      const editArgs = {
-        path: "sample.txt",
-        edits: [
-          {
-            op: "replace",
-            pos: `2#${computeLineHash(2, "bbb")}:bbb`,
-            lines: ["BETA"],
-          },
-        ],
-      };
-      const theme = {
-        bold: (text: string) => text,
-        fg: (_token: string, text: string) => text,
-      };
-      const state: Record<string, unknown> = {};
-      const callContext = {
-        argsComplete: true,
-        state,
-        cwd,
-        expanded: false,
-        lastComponent: undefined,
-        invalidate() {},
-      } as any;
-
-      const callComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      callContext.lastComponent = callComponent;
-
-      const deadline = Date.now() + 2_000;
-      while (!(state as { preview?: unknown }).preview) {
-        if (Date.now() > deadline) {
-          throw new Error("timed out waiting for edit preview");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-
-      const previewComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(previewComponent.render(200).join("\n")).toContain(":BETA");
-
-      await writeFile(path, "AAA\nbbb\nccc\n", "utf-8");
-
-      const result = await editTool.execute(
-        "e1",
-        editArgs,
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-      editTool.renderResult(
-        result,
-        { expanded: false, isPartial: false },
-        theme,
-        {
-          args: editArgs,
-          state,
-          isError: false,
-          lastComponent: undefined,
-          invalidate() {},
-        } as any,
-      );
-
-      expect((state as { preview?: unknown }).preview).toBeUndefined();
-      callContext.lastComponent = previewComponent;
-      const postResultCall = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(postResultCall.render(200).join("\n")).not.toContain(":BETA");
-    });
-  });
-  it("clears preview after an error result renders", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-      const editArgs = {
-        path: "sample.txt",
-        edits: [
-          {
-            op: "replace",
-            pos: `2#${computeLineHash(2, "bbb")}:bbb`,
-            lines: ["BETA"],
-          },
-        ],
-      };
-      const theme = {
-        bold: (text: string) => text,
-        fg: (_token: string, text: string) => text,
-      };
-      const state: Record<string, unknown> = {};
-      const callContext = {
-        argsComplete: true,
-        state,
-        cwd,
-        expanded: false,
-        lastComponent: undefined,
-        invalidate() {},
-      } as any;
-
-      const callComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      callContext.lastComponent = callComponent;
-
-      const deadline = Date.now() + 2_000;
-      while (!(state as { preview?: unknown }).preview) {
-        if (Date.now() > deadline) {
-          throw new Error("timed out waiting for edit preview");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-
-      const previewComponent = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(previewComponent.render(200).join("\n")).toContain(":BETA");
-
-      await writeFile(path, "aaa\nchanged\nccc\n", "utf-8");
-
-      let errorMessage = "";
-      try {
-        await editTool.execute(
-          "e1",
-          editArgs,
-          undefined,
-          undefined,
-          { cwd } as any,
-        );
-      } catch (error: unknown) {
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
-      expect(errorMessage).toContain("stale anchor");
-
-      editTool.renderResult(
-        { content: [{ type: "text", text: errorMessage }] },
-        { expanded: false, isPartial: false },
-        theme,
-        {
-          args: editArgs,
-          state,
-          isError: true,
-          lastComponent: undefined,
-          invalidate() {},
-        } as any,
-      );
-
-      expect((state as { preview?: unknown }).preview).toBeUndefined();
-      callContext.lastComponent = previewComponent;
-      const postErrorCall = editTool.renderCall(
-        editArgs,
-        theme,
-        callContext,
-      ) as { render: (width: number) => string[] };
-      expect(postErrorCall.render(200).join("\n")).not.toContain(":BETA");
     });
   });
 });

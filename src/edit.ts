@@ -78,6 +78,10 @@ export const hashlineEditToolSchema = Type.Object(
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     ),
+    oldText: Type.Optional(Type.String({ description: "Deprecated. Use edits[].oldText with op replace_text." })),
+    newText: Type.Optional(Type.String({ description: "Deprecated. Use edits[].newText with op replace_text." })),
+    old_text: Type.Optional(Type.String({ description: "Deprecated. Use oldText or edits[].oldText." })),
+    new_text: Type.Optional(Type.String({ description: "Deprecated. Use newText or edits[].newText." })),
   },
   { additionalProperties: false },
 );
@@ -195,34 +199,6 @@ function getVisibleLines(text: string): string[] {
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
 }
 
-// Non-enumerable so AJV (additionalProperties: false) ignores them,
-// while hasOwnProperty checks in assertEditRequest still find them.
-export function prepareEditArguments(args: unknown): unknown {
-  if (!isRecord(args)) {
-    return args;
-  }
-
-  const legacyPresent = LEGACY_KEYS.filter((key) => hasOwn(args, key));
-  if (legacyPresent.length === 0) {
-    return args;
-  }
-
-  const legacySet = new Set<string>(legacyPresent);
-  const prepared = Object.fromEntries(
-    Object.entries(args).filter(([key]) => !legacySet.has(key)),
-  );
-
-  for (const key of legacyPresent) {
-    Object.defineProperty(prepared, key, {
-      value: args[key],
-      enumerable: false,
-      configurable: true,
-      writable: true,
-    });
-  }
-
-  return prepared;
-}
 
 // Intentional overlap with the published TypeBox schema:
 // - pi normally runs AJV validation before execute(), but that can be disabled in
@@ -747,14 +723,13 @@ export async function computeEditPreview(
   request: unknown,
   cwd: string,
 ): Promise<EditPreview> {
-  const preparedRequest = prepareEditArguments(request);
   try {
-    assertEditRequest(preparedRequest);
+    assertEditRequest(request);
   } catch (error: unknown) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
 
-  const params = preparedRequest as EditRequestParams;
+  const params = request as EditRequestParams;
   const path = params.path;
   const absolutePath = resolveToCwd(path, cwd);
   const toolEdits = Array.isArray(params.edits) ? params.edits : [];
@@ -829,7 +804,6 @@ export function registerEditTool(pi: ExtensionAPI): void {
     label: "Edit",
     description: EDIT_DESC,
     parameters: hashlineEditToolSchema,
-    prepareArguments: prepareEditArguments,
     promptSnippet: EDIT_PROMPT_SNIPPET,
     // Force the default tool shell (Box with pending/success/error background) so
     // we don't inherit renderShell: "self" from the built-in edit tool of the
