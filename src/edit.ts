@@ -613,7 +613,7 @@ function formatRequestedRangePreviews(
       offset: range.start,
       limit: requestedEnd - range.start + 1,
     });
-    const hasReturnedLines = /^\d+#/m.test(preview.text);
+    const hasReturnedLines = /^\s*\d+#/m.test(preview.text);
     const actualEnd = hasReturnedLines
       ? preview.nextOffset !== undefined
         ? preview.nextOffset - 1
@@ -650,7 +650,7 @@ function truncateOutlineEntry(text: string, max = 88): string {
 function collectOutlineEntries(previewText: string): string[] {
   const structural: string[] = [];
   for (const line of previewText.split("\n")) {
-    const match = line.match(/^(\d+)#[A-Z]{2}:(.*)$/);
+    const match = line.match(/^\s*(\d+)#[A-Z]{2}:(.*)$/);
     if (!match) continue;
     const content = match[2]!.trim();
     if (content.length === 0) continue;

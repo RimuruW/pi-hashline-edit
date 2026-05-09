@@ -30,6 +30,17 @@ describe("formatHashlineReadPreview", () => {
     expect(result.text).toContain(":alpha");
   });
 
+  it("pads line numbers to the same width within the returned block", () => {
+    const text = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`).join("\n");
+    const result = formatHashlineReadPreview(text, { offset: 8 });
+
+    expect(result.text.split("\n").slice(0, 3)).toEqual([
+      ` 8#${computeLineHash(8, "line-8")}:line-8`,
+      ` 9#${computeLineHash(9, "line-9")}:line-9`,
+      `10#${computeLineHash(10, "line-10")}:line-10`,
+    ]);
+  });
+
   it("returns an advisory for empty files instead of a synthetic empty-line anchor", () => {
     const result = formatHashlineReadPreview("", { offset: 1 });
 
@@ -87,6 +98,17 @@ describe("formatHashlineRegion", () => {
       `5#${computeLineHash(5, "alpha")}:alpha\n` +
       `6#${computeLineHash(6, "beta")}:beta\n` +
       `7#${computeLineHash(7, "gamma")}:gamma`,
+    );
+  });
+
+  it("pads region line numbers to the widest line number", () => {
+    const lines = ["alpha", "beta", "gamma"];
+    const result = formatHashlineRegion(lines, 8);
+
+    expect(result).toBe(
+      ` 8#${computeLineHash(8, "alpha")}:alpha\n` +
+      ` 9#${computeLineHash(9, "beta")}:beta\n` +
+      `10#${computeLineHash(10, "gamma")}:gamma`,
     );
   });
 

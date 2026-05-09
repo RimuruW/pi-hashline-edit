@@ -22,12 +22,12 @@ pi install /path/to/pi-hashline-edit
 
 ### `read` — tagged line output
 
-Text files are returned with a `LINE#HASH:` prefix on every line:
+Text files are returned with a `LINE#HASH:` prefix on every line. Line numbers may be left-padded within each returned block so the `#HASH:` columns align:
 
 ```text
-10#VR:function hello() {
-11#KT:  console.log("world");
-12#BH:}
+ 8#VR:function hello() {
+ 9#KT:  console.log("world");
+10#BH:}
 ```
 
 - `LINE` — 1-indexed line number.

@@ -203,6 +203,8 @@ function formatMismatchError(
   }
 
   const sorted = [...displayLines].sort((a, b) => a - b);
+  const maxDisplayLine = sorted[sorted.length - 1] ?? 1;
+  const lineNumberWidth = String(maxDisplayLine).length;
   const out: string[] = [
     `[E_STALE_ANCHOR] ${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
     "",
@@ -214,7 +216,7 @@ function formatMismatchError(
     prev = num;
     const content = fileLines[num - 1];
     const hash = computeLineHash(num, content);
-    const prefix = `${num}#${hash}`;
+    const prefix = `${String(num).padStart(lineNumberWidth, " ")}#${hash}`;
     out.push(
       retryLineSet.has(num)
         ? `>>> ${prefix}:${content}`
@@ -977,10 +979,14 @@ export function formatHashlineRegion(
   lines: string[],
   startLine: number,
 ): string {
+  const lineNumberWidth = String(
+    startLine + Math.max(0, lines.length - 1),
+  ).length;
   return lines
     .map((line, index) => {
       const lineNumber = startLine + index;
-      return `${lineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
+      const paddedLineNumber = String(lineNumber).padStart(lineNumberWidth, " ");
+      return `${paddedLineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
     })
     .join("\n");
 }

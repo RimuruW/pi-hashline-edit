@@ -13,7 +13,7 @@ import { access as fsAccess } from "fs/promises";
 import { constants } from "fs";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { loadFileKindAndText } from "./file-kind";
-import { computeLineHash, formatHashlineRegion } from "./hashline";
+import { formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
@@ -94,12 +94,7 @@ export function formatHashlineReadPreview(
     ? Math.min(startLine - 1 + limit, totalLines)
     : totalLines;
   const selected = allLines.slice(startLine - 1, endIdx);
-  const formatted = selected
-    .map((line, index) => {
-      const lineNumber = startLine + index;
-      return `${lineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
-    })
-    .join("\n");
+  const formatted = formatHashlineRegion(selected, startLine);
 
   const truncation = truncateHead(formatted);
   if (truncation.firstLineExceedsLimit) {

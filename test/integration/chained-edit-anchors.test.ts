@@ -165,9 +165,9 @@ describe("chained edit anchors", () => {
       expect(editResult.content[0].text).toContain("--- Anchors");
       const anchorLines = editResult.content[0].text
         .split("\n")
-        .filter((line: string) => line.match(/^\d+#\w{2}:.*/));
+        .filter((line: string) => line.match(/^\s*\d+#\w{2}:.*/));
       for (const line of anchorLines) {
-        expect(line).not.toMatch(/^\d+#\w{2}:$/);
+        expect(line).not.toMatch(/^\s*\d+#\w{2}:$/);
       }
     });
   });
