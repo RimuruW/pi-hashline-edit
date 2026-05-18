@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { chmod, lstat, mkdir, readlink, rename, stat, writeFile } from "fs/promises";
+import { lstat, mkdir, readlink, rename, stat, writeFile } from "fs/promises";
 import { dirname, join, parse, resolve, sep } from "path";
 
 export async function resolveMutationTargetPath(path: string): Promise<string> {
@@ -69,11 +69,8 @@ export async function writeFileAtomically(
   const dir = dirname(targetPath);
   const tempPath = join(dir, `.tmp-${randomUUID()}`);
   await mkdir(dir, { recursive: true });
-  await writeFile(tempPath, content, "utf-8");
-
-  if (existingStats) {
-    await chmod(tempPath, existingStats.mode & 0o7777);
-  }
+  const mode = existingStats ? existingStats.mode & 0o7777 : 0o600;
+  await writeFile(tempPath, content, { encoding: "utf-8", flag: "wx", mode });
 
   await rename(tempPath, targetPath);
 }

@@ -5,6 +5,17 @@ import { withTempFile } from "../support/fixtures";
 import { writeFileAtomically } from "../../src/fs-write";
 
 describe("writeFileAtomically", () => {
+  it("creates new files with owner-only permissions", async () => {
+    await withTempFile("seed.txt", "seed\n", async ({ cwd }) => {
+      const path = join(cwd, "created.txt");
+
+      await writeFileAtomically(path, "secret\n");
+
+      const fileStats = await stat(path);
+      expect(fileStats.mode & 0o777).toBe(0o600);
+    });
+  });
+
   it("preserves the target file mode when replacing an existing file", async () => {
     await withTempFile("script.sh", "echo before\n", async ({ path }) => {
       await chmod(path, 0o755);

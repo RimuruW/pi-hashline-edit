@@ -794,293 +794,295 @@ export async function computeEditPreview(
   }
 }
 
-export function registerEditTool(pi: ExtensionAPI): void {
-  const toolDefinition: ToolDefinition<
-    typeof hashlineEditToolSchema,
-    HashlineEditToolDetails,
-    EditRenderState
-  > & { renderShell?: "default" | "self" } = {
-    name: "edit",
-    label: "Edit",
-    description: EDIT_DESC,
-    parameters: hashlineEditToolSchema,
-    promptSnippet: EDIT_PROMPT_SNIPPET,
-    // Force the default tool shell (Box with pending/success/error background) so
-    // we don't inherit renderShell: "self" from the built-in edit tool of the
-    // same name, which would drop the shared background color block.
-    renderShell: "default",
-    renderCall(args, theme, context) {
-      const previewInput = getRenderablePreviewInput(args);
-      if (context.executionStarted) {
-        context.state.argsKey = undefined;
+type EditToolDefinition = ToolDefinition<
+  typeof hashlineEditToolSchema,
+  HashlineEditToolDetails,
+  EditRenderState
+> & { renderShell?: "default" | "self" };
+
+const editToolDefinition: EditToolDefinition = {
+  name: "edit",
+  label: "Edit",
+  description: EDIT_DESC,
+  parameters: hashlineEditToolSchema,
+  promptSnippet: EDIT_PROMPT_SNIPPET,
+  // Force the default tool shell (Box with pending/success/error background) so
+  // we don't inherit renderShell: "self" from the built-in edit tool of the
+  // same name, which would drop the shared background color block.
+  renderShell: "default",
+  renderCall(args, theme, context) {
+    const previewInput = getRenderablePreviewInput(args);
+    if (context.executionStarted) {
+      context.state.argsKey = undefined;
+      context.state.preview = undefined;
+      context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
+    } else if (!context.argsComplete || !previewInput) {
+      context.state.argsKey = undefined;
+      context.state.preview = undefined;
+      context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
+    } else {
+      const argsKey = JSON.stringify(previewInput);
+      if (context.state.argsKey !== argsKey) {
+        context.state.argsKey = argsKey;
         context.state.preview = undefined;
-        context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
-      } else if (!context.argsComplete || !previewInput) {
-        context.state.argsKey = undefined;
-        context.state.preview = undefined;
-        context.state.previewGeneration = (context.state.previewGeneration ?? 0) + 1;
-      } else {
-        const argsKey = JSON.stringify(previewInput);
-        if (context.state.argsKey !== argsKey) {
-          context.state.argsKey = argsKey;
-          context.state.preview = undefined;
-          const previewGeneration = (context.state.previewGeneration ?? 0) + 1;
-          context.state.previewGeneration = previewGeneration;
-          computeEditPreview(previewInput, context.cwd)
-            .then((preview) => {
-              if (
-                context.state.argsKey === argsKey &&
-                context.state.previewGeneration === previewGeneration
-              ) {
-                context.state.preview = preview;
-                context.invalidate();
-              }
-            })
-            .catch((err: unknown) => {
-              if (
-                context.state.argsKey === argsKey &&
-                context.state.previewGeneration === previewGeneration
-              ) {
-                context.state.preview = {
-                  error: err instanceof Error ? err.message : String(err),
-                };
-                context.invalidate();
-              }
-            });
-        }
+        const previewGeneration = (context.state.previewGeneration ?? 0) + 1;
+        context.state.previewGeneration = previewGeneration;
+        computeEditPreview(previewInput, context.cwd)
+          .then((preview) => {
+            if (
+              context.state.argsKey === argsKey &&
+              context.state.previewGeneration === previewGeneration
+            ) {
+              context.state.preview = preview;
+              context.invalidate();
+            }
+          })
+          .catch((err: unknown) => {
+            if (
+              context.state.argsKey === argsKey &&
+              context.state.previewGeneration === previewGeneration
+            ) {
+              context.state.preview = {
+                error: err instanceof Error ? err.message : String(err),
+              };
+              context.invalidate();
+            }
+          });
       }
+    }
+    const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+    text.setText(
+      formatEditCall(
+        getRenderablePreviewInput(args) ?? undefined,
+        context.state as EditRenderState,
+        context.expanded,
+        theme,
+      ),
+    );
+    return text;
+  },
+
+  renderResult(result, { isPartial }, theme, context) {
+    if (isPartial) {
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-      text.setText(
-        formatEditCall(
-          getRenderablePreviewInput(args) ?? undefined,
-          context.state as EditRenderState,
-          context.expanded,
-          theme,
-        ),
-      );
+      text.setText(theme.fg("warning", "Editing..."));
       return text;
-    },
+    }
 
-    renderResult(result, { isPartial }, theme, context) {
-      if (isPartial) {
-        const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-        text.setText(theme.fg("warning", "Editing..."));
-        return text;
-      }
+    const typedResult = result as {
+      content?: Array<{ type: string; text?: string }>;
+      details?: HashlineEditToolDetails;
+    };
+    const renderedText = getRenderedEditTextContent(typedResult);
 
-      const typedResult = result as {
-        content?: Array<{ type: string; text?: string }>;
-        details?: HashlineEditToolDetails;
-      };
-      const renderedText = getRenderedEditTextContent(typedResult);
+    const renderState = context.state as EditRenderState | undefined;
+    const previewBeforeResult = renderState?.preview;
+    if (renderState) {
+      renderState.preview = undefined;
+      renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
+    }
 
-      const renderState = context.state as EditRenderState | undefined;
-      const previewBeforeResult = renderState?.preview;
-      if (renderState) {
-        renderState.preview = undefined;
-        renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
-      }
-
-      if (context.isError) {
-        if (!renderedText) {
-          return new Text("", 0, 0);
-        }
-        const text = context.lastComponent instanceof Text
-          ? context.lastComponent
-          : new Text("", 0, 0);
-        text.setText(`\n${theme.fg("error", renderedText)}`);
-        return text;
-      }
-
-      if (isAppliedChangedResult(typedResult.details)) {
-        const appliedChangedText = buildAppliedChangedResultText(
-          renderedText,
-          typedResult.details,
-          previewBeforeResult,
-          theme,
-        );
-        if (!appliedChangedText) {
-          return new Text("", 0, 0);
-        }
-        const text = context.lastComponent instanceof Text
-          ? context.lastComponent
-          : new Text("", 0, 0);
-        text.setText(appliedChangedText);
-        return text;
-      }
-
+    if (context.isError) {
       if (!renderedText) {
         return new Text("", 0, 0);
       }
-
-      const markdown = context.lastComponent instanceof Markdown
+      const text = context.lastComponent instanceof Text
         ? context.lastComponent
-        : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
-      markdown.setText(formatRenderedEditResultMarkdown(renderedText));
-      return markdown;
-    },
+        : new Text("", 0, 0);
+      text.setText(`\n${theme.fg("error", renderedText)}`);
+      return text;
+    }
 
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      assertEditRequest(params);
-
-      const normalizedParams = params as EditRequestParams;
-      const path = normalizedParams.path;
-      const absolutePath = resolveToCwd(path, ctx.cwd);
-      const returnMode = normalizedParams.returnMode ?? "changed";
-      const requestedReturnRanges = normalizedParams.returnRanges;
-      const toolEdits = Array.isArray(normalizedParams.edits)
-        ? (normalizedParams.edits as HashlineToolEdit[])
-        : [];
-      const legacy = extractLegacyTopLevelReplace(
-        normalizedParams as Record<string, unknown>,
+    if (isAppliedChangedResult(typedResult.details)) {
+      const appliedChangedText = buildAppliedChangedResultText(
+        renderedText,
+        typedResult.details,
+        previewBeforeResult,
+        theme,
       );
+      if (!appliedChangedText) {
+        return new Text("", 0, 0);
+      }
+      const text = context.lastComponent instanceof Text
+        ? context.lastComponent
+        : new Text("", 0, 0);
+      text.setText(appliedChangedText);
+      return text;
+    }
 
-      if (toolEdits.length === 0 && !legacy) {
-        return {
-          content: [{ type: "text", text: "No edits provided." }],
-          isError: true,
-          details: { diff: "", firstChangedLine: undefined },
-        };
+    if (!renderedText) {
+      return new Text("", 0, 0);
+    }
+
+    const markdown = context.lastComponent instanceof Markdown
+      ? context.lastComponent
+      : new Markdown("", 0, 0, createRenderedEditMarkdownTheme(theme));
+    markdown.setText(formatRenderedEditResultMarkdown(renderedText));
+    return markdown;
+  },
+
+  async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    assertEditRequest(params);
+
+    const normalizedParams = params as EditRequestParams;
+    const path = normalizedParams.path;
+    const absolutePath = resolveToCwd(path, ctx.cwd);
+    const returnMode = normalizedParams.returnMode ?? "changed";
+    const requestedReturnRanges = normalizedParams.returnRanges;
+    const toolEdits = Array.isArray(normalizedParams.edits)
+      ? (normalizedParams.edits as HashlineToolEdit[])
+      : [];
+    const legacy = extractLegacyTopLevelReplace(
+      normalizedParams as Record<string, unknown>,
+    );
+
+    if (toolEdits.length === 0 && !legacy) {
+      return {
+        content: [{ type: "text", text: "No edits provided." }],
+        isError: true,
+        details: { diff: "", firstChangedLine: undefined },
+      };
+    }
+
+    const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
+    return withFileMutationQueue(mutationTargetPath, async () => {
+      throwIfAborted(signal);
+      try {
+        await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
+      } catch (error: unknown) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          throw new Error(`File not found: ${path}`);
+        }
+        if (code === "EACCES" || code === "EPERM") {
+          throw new Error(`File is not writable: ${path}`);
+        }
+        throw new Error(`Cannot access file: ${path}`);
       }
 
-      const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
-      return withFileMutationQueue(mutationTargetPath, async () => {
-        throwIfAborted(signal);
-        try {
-          await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
-        } catch (error: unknown) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code === "ENOENT") {
-            throw new Error(`File not found: ${path}`);
-          }
-          if (code === "EACCES" || code === "EPERM") {
-            throw new Error(`File is not writable: ${path}`);
-          }
-          throw new Error(`Cannot access file: ${path}`);
-        }
-
-        throwIfAborted(signal);
-        const file = await loadFileKindAndText(absolutePath);
-        if (file.kind === "directory") {
-          throw new Error(`Path is a directory: ${path}. Use ls to inspect directories.`);
-        }
-        if (file.kind === "image") {
-          throw new Error(
-            `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
-          );
-        }
-        if (file.kind === "binary") {
-          throw new Error(
-            `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
-          );
-        }
-
-        throwIfAborted(signal);
-        const { bom, text: content } = stripBom(file.text);
-        const originalEnding = detectLineEnding(content);
-        const originalNormalized = normalizeToLF(content);
-
-        let result: string;
-        let warnings: string[] | undefined;
-        let noopEdits:
-          | Array<{
-              editIndex: number;
-              loc: string;
-              currentContent: string;
-            }>
-          | undefined;
-        let firstChangedLine: number | undefined;
-        let lastChangedLine: number | undefined;
-        let compatibilityDetails: CompatibilityDetails | undefined;
-
-        if (toolEdits.length > 0) {
-          const resolved = resolveEditAnchors(toolEdits);
-          const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
-          result = anchorResult.content;
-          warnings = anchorResult.warnings;
-          noopEdits = anchorResult.noopEdits;
-          firstChangedLine = anchorResult.firstChangedLine;
-          lastChangedLine = anchorResult.lastChangedLine;
-        } else {
-          const normalizedOldText = normalizeToLF(legacy!.oldText);
-          const normalizedNewText = normalizeToLF(legacy!.newText);
-          const replaced = applyExactUniqueLegacyReplace(
-            originalNormalized,
-            normalizedOldText,
-            normalizedNewText,
-          );
-          result = replaced.content;
-          compatibilityDetails = {
-            used: true,
-            strategy: legacy!.strategy,
-            matchCount: replaced.matchCount,
-            ...(replaced.usedFuzzyMatch ? { fuzzyMatch: true } : {}),
-          };
-          const legacyRange = computeLegacyEditLineRange(
-            originalNormalized,
-            result,
-          );
-          firstChangedLine = legacyRange?.firstChangedLine;
-          lastChangedLine = legacyRange?.lastChangedLine;
-        }
-
-        const editsAttempted = toolEdits.length > 0 ? toolEdits.length : 1;
-        const legacyReplace = toolEdits.length === 0;
-
-        if (originalNormalized === result) {
-          const noopSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
-          return buildNoopResponse({
-            path,
-            returnMode: returnMode as ReturnMode,
-            requestedReturnRanges,
-            noopEdits,
-            originalNormalized,
-            snapshotId: noopSnapshotId,
-            editsAttempted,
-            warnings,
-            legacyReplace,
-            formatHashlineReadPreview: (text) =>
-              formatHashlineReadPreview(text, { offset: 1 }),
-            formatRequestedRangePreviews,
-            buildStructureOutline,
-          });
-        }
-
-        throwIfAborted(signal);
-        await writeFileAtomically(
-          absolutePath,
-          bom + restoreLineEndings(result, originalEnding),
+      throwIfAborted(signal);
+      const file = await loadFileKindAndText(absolutePath);
+      if (file.kind === "directory") {
+        throw new Error(`Path is a directory: ${path}. Use ls to inspect directories.`);
+      }
+      if (file.kind === "image") {
+        throw new Error(
+          `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
         );
-        const updatedSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
+      }
+      if (file.kind === "binary") {
+        throw new Error(
+          `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
+        );
+      }
 
-        const successInput = {
+      throwIfAborted(signal);
+      const { bom, text: content } = stripBom(file.text);
+      const originalEnding = detectLineEnding(content);
+      const originalNormalized = normalizeToLF(content);
+
+      let result: string;
+      let warnings: string[] | undefined;
+      let noopEdits:
+        | Array<{
+            editIndex: number;
+            loc: string;
+            currentContent: string;
+          }>
+        | undefined;
+      let firstChangedLine: number | undefined;
+      let lastChangedLine: number | undefined;
+      let compatibilityDetails: CompatibilityDetails | undefined;
+
+      if (toolEdits.length > 0) {
+        const resolved = resolveEditAnchors(toolEdits);
+        const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+        result = anchorResult.content;
+        warnings = anchorResult.warnings;
+        noopEdits = anchorResult.noopEdits;
+        firstChangedLine = anchorResult.firstChangedLine;
+        lastChangedLine = anchorResult.lastChangedLine;
+      } else {
+        const normalizedOldText = normalizeToLF(legacy!.oldText);
+        const normalizedNewText = normalizeToLF(legacy!.newText);
+        const replaced = applyExactUniqueLegacyReplace(
+          originalNormalized,
+          normalizedOldText,
+          normalizedNewText,
+        );
+        result = replaced.content;
+        compatibilityDetails = {
+          used: true,
+          strategy: legacy!.strategy,
+          matchCount: replaced.matchCount,
+          ...(replaced.usedFuzzyMatch ? { fuzzyMatch: true } : {}),
+        };
+        const legacyRange = computeLegacyEditLineRange(
+          originalNormalized,
+          result,
+        );
+        firstChangedLine = legacyRange?.firstChangedLine;
+        lastChangedLine = legacyRange?.lastChangedLine;
+      }
+
+      const editsAttempted = toolEdits.length > 0 ? toolEdits.length : 1;
+      const legacyReplace = toolEdits.length === 0;
+
+      if (originalNormalized === result) {
+        const noopSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
+        return buildNoopResponse({
           path,
           returnMode: returnMode as ReturnMode,
           requestedReturnRanges,
+          noopEdits,
           originalNormalized,
-          result,
-          warnings,
-          firstChangedLine,
-          lastChangedLine,
-          snapshotId: updatedSnapshotId,
-          compatibilityDetails: compatibilityDetails as
-            | ResponseCompatibilityDetails
-            | undefined,
+          snapshotId: noopSnapshotId,
           editsAttempted,
-          noopEditsCount: noopEdits?.length ?? 0,
+          warnings,
           legacyReplace,
-          formatHashlineReadPreview: (text: string) =>
+          formatHashlineReadPreview: (text) =>
             formatHashlineReadPreview(text, { offset: 1 }),
           formatRequestedRangePreviews,
           buildStructureOutline,
-        };
+        });
+      }
 
-        if (returnMode === "full") return buildFullResponse(successInput);
-        if (returnMode === "ranges") return buildRangesResponse(successInput);
-        return buildChangedResponse(successInput);
-      });
-    },
-  };
+      throwIfAborted(signal);
+      await writeFileAtomically(
+        absolutePath,
+        bom + restoreLineEndings(result, originalEnding),
+      );
+      const updatedSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
 
-  pi.registerTool(toolDefinition);
+      const successInput = {
+        path,
+        returnMode: returnMode as ReturnMode,
+        requestedReturnRanges,
+        originalNormalized,
+        result,
+        warnings,
+        firstChangedLine,
+        lastChangedLine,
+        snapshotId: updatedSnapshotId,
+        compatibilityDetails: compatibilityDetails as
+          | ResponseCompatibilityDetails
+          | undefined,
+        editsAttempted,
+        noopEditsCount: noopEdits?.length ?? 0,
+        legacyReplace,
+        formatHashlineReadPreview: (text: string) =>
+          formatHashlineReadPreview(text, { offset: 1 }),
+        formatRequestedRangePreviews,
+        buildStructureOutline,
+      };
+
+      if (returnMode === "full") return buildFullResponse(successInput);
+      if (returnMode === "ranges") return buildRangesResponse(successInput);
+      return buildChangedResponse(successInput);
+    });
+  },
+};
+
+export function registerEditTool(pi: ExtensionAPI): void {
+  pi.registerTool(editToolDefinition);
 }
