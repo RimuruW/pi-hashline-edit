@@ -1,4 +1,4 @@
-Read a UTF-8 text file. Each returned line is prefixed `LINE#HASH:content` — copy those anchors verbatim into `edit`.
+Read a text file. Each returned line is prefixed `LINE#HASH:content` — copy those anchors verbatim into `edit`.
 
 Use `offset` and `limit` to page through. Default cap: {{DEFAULT_MAX_LINES}} lines or {{DEFAULT_MAX_BYTES}}; when truncated, the tail of the output tells you the next `offset`.
 

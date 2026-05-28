@@ -36,28 +36,6 @@ function hasNullByte(buffer: Uint8Array): boolean {
   return buffer.includes(0);
 }
 
-function decodeUtf8Chunk(decoder: TextDecoder, buffer: Uint8Array): string | null {
-  try {
-    return decoder.decode(buffer, { stream: true });
-  } catch (error: unknown) {
-    if (error instanceof TypeError) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function finishUtf8(decoder: TextDecoder): string | null {
-  try {
-    return decoder.decode();
-  } catch (error: unknown) {
-    if (error instanceof TypeError) {
-      return null;
-    }
-    throw error;
-  }
-}
-
 export async function loadFileKindAndText(filePath: string): Promise<LoadedFile> {
   const pathStat = await fsStat(filePath);
   if (pathStat.isDirectory()) {
@@ -96,16 +74,12 @@ export async function loadFileKindAndText(filePath: string): Promise<LoadedFile>
       };
     }
 
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    const parts: string[] = [];
-    const sampleText = decodeUtf8Chunk(decoder, sample);
-    if (sampleText === null) {
-      return {
-        kind: "binary",
-        description: "invalid UTF-8",
-      };
-    }
-    parts.push(sampleText);
+    // Non-fatal decode, matching pi's built-in tools: invalid UTF-8 becomes
+    // U+FFFD rather than rejecting the file. The null-byte guard above is the
+    // only signal we treat as binary, so non-UTF-8 text (CP1251, GBK, …) reads
+    // instead of forcing the model to bypass hashline with raw shell edits.
+    const decoder = new TextDecoder("utf-8");
+    const parts: string[] = [decoder.decode(sample, { stream: true })];
 
     let position = bytesRead;
     while (true) {
@@ -126,25 +100,11 @@ export async function loadFileKindAndText(filePath: string): Promise<LoadedFile>
           description: "null bytes detected",
         };
       }
-      const chunkText = decodeUtf8Chunk(decoder, chunk);
-      if (chunkText === null) {
-        return {
-          kind: "binary",
-          description: "invalid UTF-8",
-        };
-      }
-      parts.push(chunkText);
+      parts.push(decoder.decode(chunk, { stream: true }));
       position += chunkBytesRead;
     }
 
-    const tail = finishUtf8(decoder);
-    if (tail === null) {
-      return {
-        kind: "binary",
-        description: "invalid UTF-8",
-      };
-    }
-    parts.push(tail);
+    parts.push(decoder.decode());
 
     return { kind: "text", text: parts.join("") };
   } finally {

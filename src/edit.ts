@@ -759,12 +759,12 @@ export async function computeEditPreview(
     }
     if (file.kind === "image") {
       return {
-        error: `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
+        error: `Path is an image file: ${path}. Hashline edit only supports text files.`,
       };
     }
     if (file.kind === "binary") {
       return {
-        error: `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
+        error: `Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
       };
     }
 
@@ -967,12 +967,12 @@ const editToolDefinition: EditToolDefinition = {
       }
       if (file.kind === "image") {
         throw new Error(
-          `Path is an image file: ${path}. Hashline edit only supports UTF-8 text files.`,
+          `Path is an image file: ${path}. Hashline edit only supports text files.`,
         );
       }
       if (file.kind === "binary") {
         throw new Error(
-          `Path is a binary file: ${path} (${file.description}). Hashline edit only supports UTF-8 text files.`,
+          `Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
         );
       }
 

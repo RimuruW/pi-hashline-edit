@@ -133,16 +133,13 @@ describe("classifyFileKind", () => {
     );
   });
 
-  it("classifies invalid utf-8 without null bytes as binary", async () => {
-    await withTempBytes("sample.bin", new Uint8Array([0xc3, 0x28]), async ({ path }) => {
-      await expect(classifyFileKind(path)).resolves.toEqual({
-        kind: "binary",
-        description: "invalid UTF-8",
-      });
+  it("classifies invalid utf-8 without null bytes as text", async () => {
+    await withTempBytes("sample.c", new Uint8Array([0xc3, 0x28]), async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
     });
   });
 
-  it("classifies invalid utf-8 beyond the sniff window as binary", async () => {
+  it("classifies invalid utf-8 beyond the sniff window as text", async () => {
     const prefix = new Uint8Array(9000).fill(0x61);
     const invalid = new Uint8Array([0xc3, 0x28]);
     const suffix = new Uint8Array([0x0a]);
@@ -151,11 +148,8 @@ describe("classifyFileKind", () => {
     bytes.set(invalid, prefix.length);
     bytes.set(suffix, prefix.length + invalid.length);
 
-    await withTempBytes("late-invalid.bin", bytes, async ({ path }) => {
-      await expect(classifyFileKind(path)).resolves.toEqual({
-        kind: "binary",
-        description: "invalid UTF-8",
-      });
+    await withTempBytes("late-invalid.c", bytes, async ({ path }) => {
+      await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
     });
   });
 
@@ -342,30 +336,72 @@ describe("file kind guards in tools", () => {
     );
   });
 
-  it("read rejects binary files even when invalid bytes appear after the sniff window", async () => {
-    const prefix = new Uint8Array(9000).fill(0x61);
-    const invalid = new Uint8Array([0xc3, 0x28]);
-    const suffix = new Uint8Array([0x0a]);
-    const bytes = new Uint8Array(prefix.length + invalid.length + suffix.length);
-    bytes.set(prefix, 0);
-    bytes.set(invalid, prefix.length);
-    bytes.set(suffix, prefix.length + invalid.length);
-
-    await withTempBytes("late-invalid.bin", bytes, async ({ cwd }) => {
+  it("read accepts invalid utf-8 without null bytes as replacement-character text", async () => {
+    await withTempBytes("sample.c", new Uint8Array([0xc3, 0x28, 0x0a]), async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
       const readTool = getTool("read");
 
-      await expect(
-        readTool.execute(
-          "r1",
-          { path: "late-invalid.bin" },
+      const result = await readTool.execute(
+        "r1",
+        { path: "sample.c" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(getText(result)).toContain("�(");
+    });
+  });
+
+  // Matches pi's built-in read/edit, which both decode with a non-fatal
+  // `buffer.toString("utf-8")` and write back as utf-8. Non-UTF-8 bytes
+  // therefore survive `read` as U+FFFD and are re-encoded on `edit`, so any
+  // invalid byte (even outside the edited region) is rewritten as the 3-byte
+  // replacement sequence. This is lossy by design — the null-byte guard is the
+  // line we hold to keep genuine binaries (with NUL) out of this path.
+  it("edit decodes invalid utf-8 as replacement chars and writes them back as utf-8", async () => {
+    await withTempBytes(
+      "sample.c",
+      new Uint8Array([0xc3, 0x28, 0x0a, 0x69, 0x6e, 0x74, 0x0a]),
+      async ({ cwd, path }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const editTool = getTool("edit");
+
+        await editTool.execute(
+          "e1",
+          { path: "sample.c", oldText: "int", newText: "long" },
           undefined,
           undefined,
           { cwd } as any,
-        ),
-      ).rejects.toThrow(/Path is a binary file: late-invalid\.bin \(invalid UTF-8\)/i);
-    });
+        );
+
+        await expect(readFile(path)).resolves.toEqual(Buffer.from("�(\nlong\n", "utf-8"));
+      },
+    );
+  });
+
+  it("edit still rejects binaries with null bytes before writing", async () => {
+    await withTempBytes(
+      "sample.bin",
+      new Uint8Array([0x69, 0x6e, 0x74, 0x00, 0x0a]),
+      async ({ cwd }) => {
+        const { pi, getTool } = makeFakePiRegistry();
+        register(pi);
+        const editTool = getTool("edit");
+
+        await expect(
+          editTool.execute(
+            "e1",
+            { path: "sample.bin", oldText: "int", newText: "long" },
+            undefined,
+            undefined,
+            { cwd } as any,
+          ),
+        ).rejects.toThrow(/binary file: sample\.bin \(null bytes detected\)/i);
+      },
+    );
   });
 
   it("edit rejects binary files before reading them as text", async () => {

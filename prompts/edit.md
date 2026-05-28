@@ -1,4 +1,4 @@
-Patch a UTF-8 text file using `LINE#HASH` anchors copied verbatim from `read`.
+Patch a text file using `LINE#HASH` anchors copied verbatim from `read`.
 
 Submit one `edit` call per file. All operations for that file go in a single `edits` array; anchors within one call must all come from the same pre-edit read.
 

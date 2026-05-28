@@ -178,7 +178,7 @@ export function registerReadTool(pi: ExtensionAPI): void {
       }
 
       if (file.kind === "binary") {
-        throw new Error(`Path is a binary file: ${rawPath} (${file.description}). Hashline read only supports UTF-8 text files and supported images.`);
+        throw new Error(`Path is a binary file: ${rawPath} (${file.description}). Hashline read only supports text files and supported images.`);
       }
 
       if (file.kind === "image") {
