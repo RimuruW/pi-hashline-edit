@@ -197,4 +197,52 @@ describe("read tool protocol", () => {
       expect(vi.mocked(fileKindMod.classifyFileKind)).not.toHaveBeenCalled();
     });
   });
+
+  it("warns that editing rewrites a file containing non-utf-8 bytes", async () => {
+    await withTempFile("legacy.c", "ignored\n", async ({ cwd }) => {
+      // U+FFFD stands in for the bytes file-kind's non-fatal decode produced
+      // from a CP1251 source. read should flag the lossy round-trip once.
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({
+        kind: "text",
+        text: "int � = 0;\n",
+      });
+
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      const result = await readTool.execute(
+        "r1",
+        { path: "legacy.c" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("editing rewrites the file as UTF-8");
+    });
+  });
+
+  it("does not warn for clean utf-8 text", async () => {
+    await withTempFile("clean.txt", "ignored\n", async ({ cwd }) => {
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({
+        kind: "text",
+        text: "alpha\nbeta\n",
+      });
+
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
+
+      const result = await readTool.execute(
+        "r1",
+        { path: "clean.txt" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).not.toContain("Non-UTF-8");
+    });
+  });
 });
