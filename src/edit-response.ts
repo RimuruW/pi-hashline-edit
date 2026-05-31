@@ -50,13 +50,6 @@ export type FullContentPreview = {
   nextOffset?: number;
 };
 
-export type CompatibilityDetails = {
-  used: true;
-  strategy: "legacy-top-level-replace";
-  matchCount: 1;
-  fuzzyMatch?: true;
-};
-
 /**
  * Host-visible, opt-in observability surface (Phase 2 C). The LLM never sees
  * this — it lives in `details` only. Hosts can use it for dashboards,
@@ -74,7 +67,6 @@ export type EditMetrics = {
   changed_lines?: { first: number; last: number };
   added_lines?: number;
   removed_lines?: number;
-  legacy_replace?: true;
 };
 
 export type ReadMetrics = {
@@ -111,7 +103,6 @@ export interface NoopResponseInput {
   snapshotId: string;
   editsAttempted: number;
   warnings: string[] | undefined;
-  legacyReplace: boolean;
   formatHashlineReadPreview: FullPreviewBuilder;
   formatRequestedRangePreviews: RangePreviewBuilder;
   buildStructureOutline: OutlineBuilder;
@@ -127,10 +118,8 @@ export interface SuccessResponseInput {
   firstChangedLine: number | undefined;
   lastChangedLine: number | undefined;
   snapshotId: string;
-  compatibilityDetails: CompatibilityDetails | undefined;
   editsAttempted: number;
   noopEditsCount: number;
-  legacyReplace: boolean;
   formatHashlineReadPreview: FullPreviewBuilder;
   formatRequestedRangePreviews: RangePreviewBuilder;
   buildStructureOutline: OutlineBuilder;
@@ -161,7 +150,6 @@ function buildMetrics(args: {
   editsAttempted: number;
   noopEditsCount: number;
   warningsCount: number;
-  legacyReplace: boolean;
   firstChangedLine?: number;
   lastChangedLine?: number;
   addedLines?: number;
@@ -174,7 +162,6 @@ function buildMetrics(args: {
     return_mode: args.returnMode,
     classification: args.classification,
   };
-  if (args.legacyReplace) metrics.legacy_replace = true;
   if (
     args.classification === "applied" &&
     args.firstChangedLine !== undefined &&
@@ -210,7 +197,6 @@ export function buildNoopResponse(input: NoopResponseInput): ToolResult {
     snapshotId,
     editsAttempted,
     warnings,
-    legacyReplace,
     formatHashlineReadPreview,
     formatRequestedRangePreviews,
     buildStructureOutline,
@@ -258,7 +244,6 @@ export function buildNoopResponse(input: NoopResponseInput): ToolResult {
     editsAttempted,
     noopEditsCount: noopEdits?.length ?? 0,
     warningsCount: warnings?.length ?? 0,
-    legacyReplace,
   });
 
   return {
@@ -296,11 +281,9 @@ export function buildFullResponse(input: SuccessResponseInput): ToolResult {
     firstChangedLine,
     lastChangedLine,
     snapshotId,
-    compatibilityDetails,
     originalNormalized,
     editsAttempted,
     noopEditsCount,
-    legacyReplace,
     formatHashlineReadPreview,
     buildStructureOutline,
   } = input;
@@ -316,7 +299,6 @@ export function buildFullResponse(input: SuccessResponseInput): ToolResult {
     editsAttempted,
     noopEditsCount,
     warningsCount: warnings?.length ?? 0,
-    legacyReplace,
     firstChangedLine,
     lastChangedLine,
   });
@@ -337,7 +319,6 @@ export function buildFullResponse(input: SuccessResponseInput): ToolResult {
           : {}),
       },
       structureOutline: outline.outline,
-      ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
       metrics,
     },
   };
@@ -351,12 +332,10 @@ export function buildRangesResponse(input: SuccessResponseInput): ToolResult {
     firstChangedLine,
     lastChangedLine,
     snapshotId,
-    compatibilityDetails,
     originalNormalized,
     requestedReturnRanges,
     editsAttempted,
     noopEditsCount,
-    legacyReplace,
     formatRequestedRangePreviews,
     buildStructureOutline,
   } = input;
@@ -380,7 +359,6 @@ export function buildRangesResponse(input: SuccessResponseInput): ToolResult {
     editsAttempted,
     noopEditsCount,
     warningsCount: warnings?.length ?? 0,
-    legacyReplace,
     firstChangedLine,
     lastChangedLine,
   });
@@ -393,7 +371,6 @@ export function buildRangesResponse(input: SuccessResponseInput): ToolResult {
       snapshotId,
       returnedRanges: rangePreviews.returnedRanges,
       structureOutline: outline.outline,
-      ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
       metrics,
     },
   };
@@ -406,11 +383,9 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
     firstChangedLine,
     lastChangedLine,
     snapshotId,
-    compatibilityDetails,
     originalNormalized,
     editsAttempted,
     noopEditsCount,
-    legacyReplace,
   } = input;
 
   const diffResult = generateDiffString(originalNormalized, result);
@@ -447,7 +422,6 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
     editsAttempted,
     noopEditsCount,
     warningsCount: warnings?.length ?? 0,
-    legacyReplace,
     firstChangedLine,
     lastChangedLine,
     addedLines,
@@ -460,7 +434,6 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
       diff: diffResult.diff,
       firstChangedLine: firstChangedLine ?? diffResult.firstChangedLine,
       snapshotId,
-      ...(compatibilityDetails ? { compatibility: compatibilityDetails } : {}),
       metrics,
     },
   };

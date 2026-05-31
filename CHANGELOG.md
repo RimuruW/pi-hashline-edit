@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-01
+
+### Added
+
+- Single request-normalization layer (`src/edit-normalize.ts`, wired as the tool's `prepareArguments` hook) that converges model dialects onto the canonical `{ path, edits: [{ op, ... }] }` shape before validation: top-level `oldText`/`newText` (and `old_text`/`new_text`), edit items with `oldText`/`newText` and no `op`, `edits` serialized as a JSON string, and the `file_path` alias.
+- Non-blocking edit warnings for two silent failure modes (issue #22): a single-anchor `replace` that receives multiple `lines` (likely a missing `end`), and boundary-line duplication on both sides of a replaced range (the previously undetected leading-line variant is now caught alongside the trailing-line one).
+
+### Changed
+
+- **Breaking (runtime behavior):** top-level native text replaces now normalize to a strict, unique-match `op: "replace_text"`. The previous fuzzy legacy fallback (Unicode-quote/dash/space and trailing-whitespace tolerance) is removed; an inexact or non-unique match is rejected with guidance to re-read and use hashline anchors.
+- The published edit schema no longer declares the legacy top-level fields; normalization folds them into `edits` before validation, so the model is never shown a non-hashline path. The `lines` field is published as a string array only (the unused string/null union variants are gone).
+
+### Removed
+
+- The parallel fuzzy legacy text-replace path (`src/edit-compat.ts`) and the "edit compatibility mode" UI notifier (`src/compatibility-notify.ts`), both superseded by the normalization layer.
+
+### Tests
+
+- Added `normalizeEditRequest` unit coverage and rewrote the compatibility suite around the normalized contract; renamed `computeLegacyEditLineRange` to `computeChangedLineRange`.
+
 ## [0.6.1] - 2026-05-10
 
 ### Fixed

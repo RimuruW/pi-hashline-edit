@@ -179,10 +179,15 @@ describe("applyHashlineEdits — heuristics", () => {
       },
     ];
     const result = applyHashlineEdits(content, edits);
+    // The runtime does not auto-correct the duplicated boundary line; the
+    // replacement is applied verbatim. It does surface a non-blocking warning
+    // so the model can notice a likely Variant-A boundary duplication.
     expect(result.content).toBe(
       "before();\nbefore();\nif (ok) {\n  runSafe();\n}\nafter();",
     );
-    expect(result.warnings).toBeUndefined();
+    expect(result.warnings).toEqual([
+      "Potential boundary duplication before replace 2#YP-3#TP: the replacement starts with a line that matches the preceding surviving line after trim.",
+    ]);
   });
 
   it("does not auto-correct escaped tab indentation even when the env flag is set", () => {
@@ -229,6 +234,57 @@ describe("applyHashlineEdits — heuristics", () => {
 
     expect(result.content).toBe("aaa\n\\uDDDD\nccc");
     expect(result.warnings?.[0]).toContain("Detected literal \\uDDDD");
+  });
+
+  it("warns when a single-anchor replace receives multiple lines (likely missing end)", () => {
+    const content = "aaa\nbbb\nccc\nddd";
+    const edits: HashlineEdit[] = [
+      {
+        op: "replace",
+        pos: makeTag(2, "bbb"),
+        lines: ["x1", "x2", "x3"],
+      },
+    ];
+    const result = applyHashlineEdits(content, edits);
+
+    // Only the single line at pos is replaced — no autocorrection.
+    expect(result.content).toBe("aaa\nx1\nx2\nx3\nccc\nddd");
+    expect(result.warnings?.some((w) => w.includes("Single-anchor replace"))).toBe(
+      true,
+    );
+  });
+
+  it("does not warn when a single-anchor replace receives one line", () => {
+    const content = "aaa\nbbb\nccc";
+    const edits: HashlineEdit[] = [
+      {
+        op: "replace",
+        pos: makeTag(2, "bbb"),
+        lines: ["BBB"],
+      },
+    ];
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("aaa\nBBB\nccc");
+    expect(result.warnings).toBeUndefined();
+  });
+
+  it("does not warn FM1 when end is supplied for a range replace", () => {
+    const content = "aaa\nbbb\nccc\nddd";
+    const edits: HashlineEdit[] = [
+      {
+        op: "replace",
+        pos: makeTag(2, "bbb"),
+        end: makeTag(3, "ccc"),
+        lines: ["x1", "x2", "x3"],
+      },
+    ];
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("aaa\nx1\nx2\nx3\nddd");
+    expect(
+      result.warnings?.some((w) => w.includes("Single-anchor replace")) ?? false,
+    ).toBe(false);
   });
 });
 

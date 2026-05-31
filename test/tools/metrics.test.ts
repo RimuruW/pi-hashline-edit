@@ -101,7 +101,7 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
     });
   });
 
-  it("legacy top-level oldText path flags legacy_replace=true", async () => {
+  it("top-level oldText path normalizes to a single replace_text edit in metrics", async () => {
     await withTempFile("c.txt", "one\ntwo\nthree\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
@@ -119,8 +119,8 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
         edits_attempted: 1,
         return_mode: "changed",
         classification: "applied",
-        legacy_replace: true,
       });
+      expect(result.details?.metrics?.legacy_replace).toBeUndefined();
     });
   });
 

@@ -39,15 +39,20 @@ describe("computeEditPreview", () => {
     });
   });
 
-  it("returns a diff for fuzzy legacy replacements before execution", async () => {
-    await withTempFile("sample.txt", "he said “hi”\n", async ({ cwd }) => {
-      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "he said “hi”\n" });
+  it("returns a diff for a normalized top-level replace before execution", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\ngamma\n", async ({ cwd }) => {
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({
+        kind: "text",
+        text: "alpha\nbeta\ngamma\n",
+      });
 
+      // Top-level oldText/newText is folded into a strict replace_text edit by
+      // normalizeEditRequest, which computeEditPreview applies internally.
       const preview = await computeEditPreview(
         {
           path: "sample.txt",
-          oldText: 'he said "hi"',
-          newText: "HELLO",
+          oldText: "beta",
+          newText: "BETA",
         },
         cwd,
       );
@@ -56,7 +61,7 @@ describe("computeEditPreview", () => {
       if (!("diff" in preview)) {
         return;
       }
-      expect(preview.diff).toContain("HELLO");
+      expect(preview.diff).toContain("BETA");
     });
   });
 

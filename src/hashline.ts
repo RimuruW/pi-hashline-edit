@@ -824,6 +824,11 @@ export function applyHashlineEdits(
           continue;
         }
         const endLine = edit.end?.line ?? edit.pos.line;
+        if (!edit.end && edit.lines.length > 1) {
+          warnings.push(
+            `Single-anchor replace at ${describeEdit(edit)} swapped only line ${edit.pos.line}, but you supplied ${edit.lines.length} replacement lines. If you meant to replace a range, add end. If you meant to expand one line into many, ignore this.`,
+          );
+        }
         const nextLine = lineIndex.fileLines[endLine];
         const replacementLastLine = edit.lines.at(-1)?.trim();
         if (
@@ -834,6 +839,18 @@ export function applyHashlineEdits(
         ) {
           warnings.push(
             `Potential boundary duplication after ${describeEdit(edit)}: the replacement ends with a line that matches the next surviving line after trim.`,
+          );
+        }
+        const prevLine = lineIndex.fileLines[edit.pos.line - 2];
+        const replacementFirstLine = edit.lines[0]?.trim();
+        if (
+          prevLine !== undefined &&
+          replacementFirstLine &&
+          RE_SIGNIFICANT.test(replacementFirstLine) &&
+          replacementFirstLine === prevLine.trim()
+        ) {
+          warnings.push(
+            `Potential boundary duplication before ${describeEdit(edit)}: the replacement starts with a line that matches the preceding surviving line after trim.`,
           );
         }
         break;
@@ -915,7 +932,7 @@ export function applyHashlineEdits(
     result = result.slice(0, span.start) + replacement + result.slice(span.end);
   }
 
-  const changedRange = computeLegacyEditLineRange(content, result);
+  const changedRange = computeChangedLineRange(content, result);
   return {
     content: result,
     firstChangedLine: changedRange?.firstChangedLine,
@@ -991,14 +1008,14 @@ export function formatHashlineRegion(
     .join("\n");
 }
 
-// ─── Legacy edit line range computation ─────────────────────────────
+// ─── Changed line range computation ─────────────────────────────────
 
 /**
- * Compute first/last changed line numbers for legacy (oldText/newText) edits.
+ * Compute first/last changed line numbers between two document versions.
  * Uses character-level diff to locate the changed span, then maps to line
  * numbers in the result document so downstream anchor chaining works.
  */
-export function computeLegacyEditLineRange(
+export function computeChangedLineRange(
   original: string,
   result: string,
 ): { firstChangedLine: number; lastChangedLine: number } | null {

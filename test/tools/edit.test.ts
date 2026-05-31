@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { readFile, writeFile } from "fs/promises";
 import Ajv from "ajv";
 import {
   assertEditRequest,
@@ -16,46 +15,16 @@ describe("assertEditRequest", () => {
     ).toThrow(/unknown or unsupported fields/i);
   });
 
-  it("accepts complete legacy replace fields when edits is absent", () => {
+  it("rejects top-level oldText/newText (folded by normalize, not accepted raw)", () => {
+    // After normalization these become edits[]; reaching assertEditRequest with
+    // them still present means they were not folded, so they are unknown fields.
     expect(() =>
       assertEditRequest({
         path: "a.ts",
         oldText: "before",
         newText: "after",
-      }),
-    ).not.toThrow();
-  });
-
-  it("rejects half-specified legacy replace payloads", () => {
-    expect(() =>
-      assertEditRequest({ path: "a.ts", oldText: "before" } as any),
-    ).toThrow(/legacy|both/i);
-  });
-
-  it("rejects mixed-case legacy replace payloads", () => {
-    expect(() =>
-      assertEditRequest({
-        path: "a.ts",
-        oldText: "before",
-        new_text: "after",
       } as any),
-    ).toThrow(/cannot mix legacy camelCase and snake_case/i);
-  });
-
-  it("lets assertEditRequest report mixed legacy-key semantics after schema validation", () => {
-    const ajv = new Ajv({ allErrors: true });
-    const validate = ajv.compile(hashlineEditToolSchema as any);
-    const payload = {
-      path: "a.ts",
-      edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-      oldText: "before",
-      new_text: "after",
-    };
-
-    expect(validate(payload)).toBe(true);
-    expect(() => assertEditRequest(payload as any)).toThrow(
-      /cannot mix legacy camelCase and snake_case/i,
-    );
+    ).toThrow(/unknown or unsupported fields/i);
   });
 
   it("rejects append with end", () => {
@@ -76,16 +45,32 @@ describe("assertEditRequest", () => {
     ).toThrow(/requires a "pos" anchor string/i);
   });
 
-  it("rejects non-string legacy key values", () => {
+  it("rejects an edit item with no op", () => {
     expect(() =>
       assertEditRequest({
         path: "a.ts",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-        oldText: 123,
+        edits: [{ pos: "1#ZZ", lines: ["x"] }],
       } as any),
-    ).toThrow(/must be a string/i);
+    ).toThrow(/requires an "op" string/i);
   });
-});
+
+  it("rejects non-array lines (string form no longer accepted at entry)", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: "x" }],
+      } as any),
+    ).toThrow(/lines" must be a string array/i);
+  });
+
+  it("rejects null lines at entry", () => {
+    expect(() =>
+      assertEditRequest({
+        path: "a.ts",
+        edits: [{ op: "replace", pos: "1#ZZ", lines: null }],
+      } as any),
+    ).toThrow(/lines" must be a string array/i);
+  });
 
   it("requires returnRanges when returnMode is ranges", () => {
     expect(() =>
@@ -107,6 +92,7 @@ describe("assertEditRequest", () => {
       } as any),
     ).toThrow(/returnRanges/i);
   });
+});
 
 describe("registerEditTool", () => {
   it("publishes a schema that validates strict hashline payloads", () => {
@@ -121,44 +107,22 @@ describe("registerEditTool", () => {
     ).toBe(true);
   });
 
-  it("publishes a schema that validates top-level camelCase legacy payloads", () => {
+  it("publishes a schema with no top-level native text-replace fields", () => {
     const ajv = new Ajv({ allErrors: true });
     const validate = ajv.compile(hashlineEditToolSchema as any);
 
+    // Native top-level fields are normalized away before validation; the
+    // published schema does not declare them, so AJV rejects them as additional
+    // properties.
     expect(
-      validate({
-        path: "a.ts",
-        oldText: "before",
-        newText: "after",
-      }),
-    ).toBe(true);
-  });
+      validate({ path: "a.ts", oldText: "before", newText: "after" }),
+    ).toBe(false);
 
-  it("publishes a schema that validates top-level snake_case legacy payloads", () => {
-    const ajv = new Ajv({ allErrors: true });
-    const validate = ajv.compile(hashlineEditToolSchema as any);
-
-    expect(
-      validate({
-        path: "a.ts",
-        old_text: "before",
-        new_text: "after",
-      }),
-    ).toBe(true);
-  });
-
-  it("publishes a schema that validates strict edits mixed with top-level legacy fields", () => {
-    const ajv = new Ajv({ allErrors: true });
-    const validate = ajv.compile(hashlineEditToolSchema as any);
-
-    expect(
-      validate({
-        path: "a.ts",
-        edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-        oldText: "before",
-        newText: "after",
-      }),
-    ).toBe(true);
+    const props = (hashlineEditToolSchema as any).properties;
+    expect(props.oldText).toBeUndefined();
+    expect(props.newText).toBeUndefined();
+    expect(props.old_text).toBeUndefined();
+    expect(props.new_text).toBeUndefined();
   });
 
   it("publishes a top-level object schema for pi tool registration", () => {
@@ -166,23 +130,7 @@ describe("registerEditTool", () => {
     expect((hashlineEditToolSchema as any).anyOf).toBeUndefined();
   });
 
-  it("keeps legacy top-level fields enumerable and visible through structuredClone", () => {
-    const ajv = new Ajv({ allErrors: true });
-    const validate = ajv.compile(hashlineEditToolSchema as any);
-    const payload = {
-      path: "a.ts",
-      oldText: "before",
-      newText: "after",
-    };
-    const cloned = structuredClone(payload);
-
-    expect(validate(cloned)).toBe(true);
-    expect(cloned.oldText).toBe("before");
-    expect(cloned.newText).toBe("after");
-    expect(Object.keys(cloned)).toEqual(["path", "oldText", "newText"]);
-  });
-
-  it("registers the edit tool without a prepareArguments compatibility shim", () => {
+  it("registers the edit tool with a normalization prepareArguments hook", () => {
     let registered:
       | {
           parameters?: any;
@@ -201,34 +149,17 @@ describe("registerEditTool", () => {
     registerEditTool(pi);
 
     expect(registered?.parameters).toEqual(hashlineEditToolSchema);
-    expect(registered?.prepareArguments).toBeUndefined();
-  });
-
-  it("executes fuzzy legacy top-level replace through the compatibility path", async () => {
-    await withTempFile("legacy.txt", "alpha\nconsole.log(\"hi\")\nomega\n", async ({ cwd, path }) => {
-      const { pi, getTool } = makeFakePiRegistry();
-      registerEditTool(pi);
-      const editTool = getTool("edit");
-
-      const result = await editTool.execute(
-        "legacy-1",
-        {
-          path: "legacy.txt",
-          oldText: "console.log(\"hi\")",
-          newText: "console.log(\"bye\")",
-        },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-
-      expect(await readFile(path, "utf-8")).toBe("alpha\nconsole.log(\"bye\")\nomega\n");
-      expect(result.details?.compatibility).toMatchObject({
-        used: true,
-        strategy: "legacy-top-level-replace",
-        matchCount: 1,
-      });
-      expect(result.details?.metrics?.legacy_replace).toBe(true);
+    expect(typeof registered?.prepareArguments).toBe("function");
+    // The hook folds top-level native fields into edits[].
+    expect(
+      registered?.prepareArguments?.({
+        path: "a.ts",
+        oldText: "x",
+        newText: "y",
+      }),
+    ).toEqual({
+      path: "a.ts",
+      edits: [{ op: "replace_text", oldText: "x", newText: "y" }],
     });
   });
 
