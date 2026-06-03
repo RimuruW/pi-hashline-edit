@@ -16,7 +16,7 @@ Example:
 ```
 
 Rules:
-- `lines` is literal file content: no `LINE#HASH:` prefix, no leading `+`/`-`. Match indentation exactly.
+- `lines` is literal file content: no `LINE#HASH:` prefix, no bare `HH:` hash, no leading `+`/`-`. The anchor goes in `pos`/`end` only — never copy a hash you saw in `read` output into `lines`. Match indentation exactly.
 - Do not guess, shift, or construct anchors. Copy them from the most recent `read` of this file.
 - Do not emit overlapping or adjacent edits — merge them into one.
 

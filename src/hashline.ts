@@ -59,6 +59,19 @@ const HASHLINE_PREFIX_PLUS_RE =
   /^\+\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
 
+/**
+ * Bare hashline prefix: a 2-char hash followed by ":" with no "LINE#" part
+ * (e.g. "KK:### heading", "TP:text", "TJ:"). Capture group 1 is the hash.
+ *
+ * This is the partial-hash failure mode from issue #24: the model copies a hash
+ * it saw in `read` output into the line content but drops the "LINE#" part. A
+ * single such line is genuinely ambiguous — "TS: foo", "PR: bar", "SK: key" are
+ * legitimate YAML keys / abbreviations — so it is never rejected on shape alone.
+ * Disambiguation happens against the file's actual hash set in
+ * `rejectOrWarnBareHashPrefixLines`.
+ */
+const HASHLINE_BARE_PREFIX_RE = /^\s*([ZPMQVRWSNKTXJBYH]{2}):/;
+
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
 
@@ -233,6 +246,10 @@ function formatMismatchError(
  * Reject hashline display prefixes in edit payloads. Strict semantics: the
  * model must send literal file content for `lines`, not the rendered read /
  * diff form. Silent stripping is no longer performed — see AGENTS.md.
+ *
+ * This covers the unambiguous full `LINE#HASH:` / diff `+/-` forms, rejectable
+ * on shape alone. The bare `HH:` variant (issue #24) is context-dependent and
+ * lives in `rejectOrWarnBareHashPrefixLines`.
  */
 function assertNoDisplayPrefixes(lines: string[]): void {
   for (const line of lines) {
@@ -387,6 +404,61 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
         "Detected literal \\uDDDD in edit content; no autocorrection applied. Verify whether this should be a real Unicode escape or plain text.",
       );
     }
+  }
+}
+
+/**
+ * Reject or warn on edit content that carries a hash the model copied out of
+ * `read` output instead of literal file text (issue #24, e.g.
+ * `lines: ["KK:### heading"]`). Companion to `assertNoDisplayPrefixes`, which
+ * handles the unambiguous full `LINE#HASH:` form on shape alone; this is the
+ * bare-prefix variant that needs the file's hash set to disambiguate.
+ *
+ * Bare `HH:` prefixes are ambiguous on shape alone, so two tiers run against
+ * the file's own hash set:
+ *  - HARD REJECT when the 2-char prefix equals the hash of an existing line in
+ *    this file. A coincidence is near-impossible; this is almost certainly an
+ *    anchor copied into content. Erroring before any write keeps it safe.
+ *  - WARN (no content change) when >= 2 lines merely *look* like bare prefixes
+ *    but none match the hash set. Recall is partial — the model often copies
+ *    hashes of lines this edit deletes, or of other files — so a miss cannot
+ *    prove the content is legitimate. The warning routes to the model via
+ *    `text`; it keeps its content and decides. This stays within strict
+ *    semantics: detect and surface, never silently patch.
+ */
+function rejectOrWarnBareHashPrefixLines(
+  edits: HashlineEdit[],
+  fileLines: string[],
+  warnings: string[],
+): void {
+  // Collect bare-prefix suspects up front: regex only, no file hashing. Almost
+  // every edit has none, so this lets the common path bail before paying for
+  // the file hash set below.
+  const suspects: { line: string; hash: string }[] = [];
+  for (const edit of edits) {
+    if (edit.op === "replace_text") continue;
+    for (const line of edit.lines) {
+      const match = line.match(HASHLINE_BARE_PREFIX_RE);
+      if (match) suspects.push({ line, hash: match[1]! });
+    }
+  }
+  if (suspects.length === 0) return;
+
+  const fileHashSet = new Set(fileLines.map((line, i) => computeLineHash(i + 1, line)));
+  for (const { line, hash } of suspects) {
+    if (fileHashSet.has(hash)) {
+      throw new Error(
+        `[E_INVALID_PATCH] "lines" contains "${hash}:" — "${hash}" is the hash of an existing line in this file, so this looks like a "LINE#HASH" anchor copied into the content rather than literal text. Anchors belong in "pos"/"end" only. Re-read the file and resend "lines" as literal file content. Offending line: ${JSON.stringify(line)}`,
+      );
+    }
+  }
+
+  // No suspect matched the hash set: low confidence. Only warn once enough
+  // lines look suspicious, to avoid flagging a lone legitimate "HH:" YAML key.
+  if (suspects.length >= 2) {
+    warnings.push(
+      `${suspects.length} edit line(s) start with a 2-char hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}). If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
+    );
   }
 }
 
@@ -864,6 +936,7 @@ export function applyHashlineEdits(
     throw new Error(formatMismatchError(mismatches, lineIndex.fileLines, retryLines));
   }
 
+  rejectOrWarnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
   maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
 
   const seenSpanKeys = new Set<string>();
