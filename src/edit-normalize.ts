@@ -25,7 +25,7 @@
  */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -33,15 +33,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (observed with some models, mirrors Pi's built-in edit handling).
  */
 function coerceEditsArray(edits: unknown): unknown {
-  if (typeof edits !== "string") {
-    return edits;
-  }
-  try {
-    const parsed: unknown = JSON.parse(edits);
-    return Array.isArray(parsed) ? parsed : edits;
-  } catch {
-    return edits;
-  }
+	if (typeof edits !== "string") {
+		return edits;
+	}
+	try {
+		const parsed: unknown = JSON.parse(edits);
+		return Array.isArray(parsed) ? parsed : edits;
+	} catch {
+		return edits;
+	}
+}
+
+const TOP_LEVEL_TEXT_REPLACE_KEYS = [
+	"oldText",
+	"newText",
+	"old_text",
+	"new_text",
+] as const;
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+	return Object.hasOwn(record, key);
+}
+
+/**
+ * Validate top-level native replace aliases before folding them. The normalizer
+ * must not hide ambiguous or malformed dialect fields from validation.
+ */
+function assertTopLevelTextReplaceAliases(
+	record: Record<string, unknown>,
+): void {
+	const presentKeys = TOP_LEVEL_TEXT_REPLACE_KEYS.filter((key) =>
+		hasOwn(record, key),
+	);
+	if (presentKeys.length === 0) {
+		return;
+	}
+
+	for (const key of presentKeys) {
+		if (typeof record[key] !== "string") {
+			throw new Error(`Edit request field "${key}" must be a string.`);
+		}
+	}
+
+	const hasCamel = hasOwn(record, "oldText") || hasOwn(record, "newText");
+	const hasSnake = hasOwn(record, "old_text") || hasOwn(record, "new_text");
+	if (hasCamel && hasSnake) {
+		throw new Error(
+			"Edit request cannot mix legacy camelCase and snake_case fields. Use either oldText/newText or old_text/new_text.",
+		);
+	}
+
+	if (hasCamel && (!hasOwn(record, "oldText") || !hasOwn(record, "newText"))) {
+		throw new Error(
+			"Legacy top-level replace requires both oldText and newText.",
+		);
+	}
+	if (
+		hasSnake &&
+		(!hasOwn(record, "old_text") || !hasOwn(record, "new_text"))
+	) {
+		throw new Error(
+			"Legacy top-level replace requires both old_text and new_text.",
+		);
+	}
 }
 
 /**
@@ -50,18 +104,21 @@ function coerceEditsArray(edits: unknown): unknown {
  * null when neither complete pair is present.
  */
 function extractTopLevelTextReplace(
-  record: Record<string, unknown>,
+	record: Record<string, unknown>,
 ): { oldText: string; newText: string } | null {
-  if (typeof record.oldText === "string" && typeof record.newText === "string") {
-    return { oldText: record.oldText, newText: record.newText };
-  }
-  if (
-    typeof record.old_text === "string" &&
-    typeof record.new_text === "string"
-  ) {
-    return { oldText: record.old_text, newText: record.new_text };
-  }
-  return null;
+	if (
+		typeof record.oldText === "string" &&
+		typeof record.newText === "string"
+	) {
+		return { oldText: record.oldText, newText: record.newText };
+	}
+	if (
+		typeof record.old_text === "string" &&
+		typeof record.new_text === "string"
+	) {
+		return { oldText: record.old_text, newText: record.new_text };
+	}
+	return null;
 }
 
 /**
@@ -69,16 +126,16 @@ function extractTopLevelTextReplace(
  * pair has been folded into the canonical `edits` array.
  */
 function stripTopLevelTextReplaceKeys(
-  record: Record<string, unknown>,
+	record: Record<string, unknown>,
 ): Record<string, unknown> {
-  const {
-    oldText: _oldText,
-    newText: _newText,
-    old_text: _oldSnake,
-    new_text: _newSnake,
-    ...rest
-  } = record;
-  return rest;
+	const {
+		oldText: _oldText,
+		newText: _newText,
+		old_text: _oldSnake,
+		new_text: _newSnake,
+		...rest
+	} = record;
+	return rest;
 }
 
 /**
@@ -89,16 +146,16 @@ function stripTopLevelTextReplaceKeys(
  * returned untouched.
  */
 function backfillEditOp(item: unknown): unknown {
-  if (!isRecord(item)) {
-    return item;
-  }
-  if (typeof item.op === "string") {
-    return item;
-  }
-  if (typeof item.oldText === "string" && typeof item.newText === "string") {
-    return { op: "replace_text", ...item };
-  }
-  return item;
+	if (!isRecord(item)) {
+		return item;
+	}
+	if (typeof item.op === "string") {
+		return item;
+	}
+	if (typeof item.oldText === "string" && typeof item.newText === "string") {
+		return { op: "replace_text", ...item };
+	}
+	return item;
 }
 
 /**
@@ -108,46 +165,48 @@ function backfillEditOp(item: unknown): unknown {
  * still reach validation and surface a precise error there.
  */
 export function normalizeEditRequest(input: unknown): unknown {
-  if (!isRecord(input)) {
-    return input;
-  }
+	if (!isRecord(input)) {
+		return input;
+	}
 
-  const record: Record<string, unknown> = { ...input };
+	const record: Record<string, unknown> = { ...input };
 
-  // file_path → path alias.
-  if (
-    typeof record.path !== "string" &&
-    typeof record.file_path === "string"
-  ) {
-    record.path = record.file_path;
-    delete record.file_path;
-  }
+	// file_path → path alias.
+	if (typeof record.path !== "string" && typeof record.file_path === "string") {
+		record.path = record.file_path;
+		delete record.file_path;
+	}
 
-  // edits-as-JSON-string → array.
-  if ("edits" in record) {
-    record.edits = coerceEditsArray(record.edits);
-  }
+	assertTopLevelTextReplaceAliases(record);
 
-  const existingEdits = Array.isArray(record.edits) ? record.edits : undefined;
+	const hasEditsField = hasOwn(record, "edits");
 
-  // Top-level native oldText/newText with no structured edits → fold into edits
-  // as a replace_text item. When structured edits already exist we leave the
-  // top-level keys for validation to reject (mixing the two is ambiguous).
-  if (!existingEdits || existingEdits.length === 0) {
-    const topLevel = extractTopLevelTextReplace(record);
-    if (topLevel) {
-      const stripped = stripTopLevelTextReplaceKeys(record);
-      return {
-        ...stripped,
-        edits: [{ op: "replace_text", ...topLevel }],
-      };
-    }
-  }
+	// edits-as-JSON-string → array.
+	if (hasEditsField) {
+		record.edits = coerceEditsArray(record.edits);
+	}
 
-  // Backfill missing op on edit items that look like native text replacements.
-  if (existingEdits) {
-    record.edits = existingEdits.map(backfillEditOp);
-  }
+	const existingEdits = Array.isArray(record.edits) ? record.edits : undefined;
 
-  return record;
+	// Top-level native oldText/newText with no structured edits → fold into edits
+	// as a replace_text item. When structured edits already exist, or when an
+	// edits field is present but malformed, leave top-level keys for validation
+	// to reject instead of hiding ambiguity.
+	if (!hasEditsField || existingEdits?.length === 0) {
+		const topLevel = extractTopLevelTextReplace(record);
+		if (topLevel) {
+			const stripped = stripTopLevelTextReplaceKeys(record);
+			return {
+				...stripped,
+				edits: [{ op: "replace_text", ...topLevel }],
+			};
+		}
+	}
+
+	// Backfill missing op on edit items that look like native text replacements.
+	if (existingEdits) {
+		record.edits = existingEdits.map(backfillEditOp);
+	}
+
+	return record;
 }

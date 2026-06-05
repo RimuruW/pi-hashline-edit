@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (runtime behavior):** top-level native text replaces now normalize to a strict, unique-match `op: "replace_text"`. The previous fuzzy legacy fallback (Unicode-quote/dash/space and trailing-whitespace tolerance) is removed; an inexact or non-unique match is rejected with guidance to re-read and use hashline anchors.
 - The published edit schema no longer declares the legacy top-level fields; normalization folds them into `edits` before validation, so the model is never shown a non-hashline path. The `lines` field is published as a string array only (the unused string/null union variants are gone).
 
+### Fixed
+
+- Preserve existing file modes under restrictive process `umask` values while keeping atomic-write temp files owner-only before content is written.
+- Reject ambiguous or malformed top-level native replace aliases during normalization instead of silently picking one dialect or dropping bad fields.
+- Surface an edit-time warning when a file decoded with U+FFFD replacement characters is rewritten as UTF-8, matching Pi's built-in edit behavior while avoiding a silent lossy rewrite.
+
 ### Removed
 
 - The parallel fuzzy legacy text-replace path (`src/edit-compat.ts`) and the "edit compatibility mode" UI notifier (`src/compatibility-notify.ts`), both superseded by the normalization layer.
