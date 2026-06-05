@@ -59,6 +59,19 @@ const HASHLINE_PREFIX_PLUS_RE =
   /^\+\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
 
+/**
+ * Bare hashline prefix: a 2-char hash followed by ":" with no "LINE#" part
+ * (e.g. "KK:### heading", "TP:text", "TJ:"). Capture group 1 is the hash.
+ *
+ * This is the partial-hash failure mode from issue #24: the model copies a hash
+ * it saw in `read` output into the line content but drops the "LINE#" part. A
+ * single such line is genuinely ambiguous — "TS: foo", "PR: bar", "SK: key" are
+ * legitimate YAML keys / abbreviations — so it is never rejected on shape alone.
+ * Disambiguation happens against the file's actual hash set in
+ * `rejectOrWarnBareHashPrefixLines`.
+ */
+const HASHLINE_BARE_PREFIX_RE = /^\s*([ZPMQVRWSNKTXJBYH]{2}):/;
+
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
 
@@ -233,6 +246,10 @@ function formatMismatchError(
  * Reject hashline display prefixes in edit payloads. Strict semantics: the
  * model must send literal file content for `lines`, not the rendered read /
  * diff form. Silent stripping is no longer performed — see AGENTS.md.
+ *
+ * This covers the unambiguous full `LINE#HASH:` / diff `+/-` forms, rejectable
+ * on shape alone. The bare `HH:` variant (issue #24) is context-dependent and
+ * lives in `rejectOrWarnBareHashPrefixLines`.
  */
 function assertNoDisplayPrefixes(lines: string[]): void {
   for (const line of lines) {
@@ -390,6 +407,48 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
   }
 }
 
+/**
+ * Warn on edit content that may carry a hash the model copied out of `read`
+ * output instead of literal file text (issue #24, e.g.
+ * `lines: ["KK:### heading"]`). Companion to `assertNoDisplayPrefixes`, which
+ * handles the unambiguous full `LINE#HASH:` form on shape alone.
+ *
+ * Bare `HH:` prefixes are ambiguous: the hash is only 8 bits, and legitimate
+ * file content can contain short keys / abbreviations such as `TS:` or `PR:`.
+ * Therefore this detector never rejects on bare shape or hash-set membership;
+ * it surfaces a warning and preserves strict semantics by writing content
+ * verbatim instead of silently patching it.
+ */
+function warnBareHashPrefixLines(
+  edits: HashlineEdit[],
+  fileLines: string[],
+  warnings: string[],
+): void {
+  // Collect bare-prefix suspects up front: regex only. Almost every edit has
+  // none, so this lets the common path bail before paying for file hashes.
+  const suspects: { line: string; hash: string }[] = [];
+  for (const edit of edits) {
+    if (edit.op === "replace_text") continue;
+    for (const line of edit.lines) {
+      const match = line.match(HASHLINE_BARE_PREFIX_RE);
+      if (match) suspects.push({ line, hash: match[1]! });
+    }
+  }
+  if (suspects.length === 0) return;
+
+  const fileHashSet = new Set(fileLines.map((line, i) => computeLineHash(i + 1, line)));
+  const matchCount = suspects.filter(({ hash }) => fileHashSet.has(hash)).length;
+
+  if (matchCount > 0 || suspects.length >= 2) {
+    const matchHint = matchCount > 0
+      ? ` ${matchCount} prefix(es) match existing line hashes in this file.`
+      : "";
+    warnings.push(
+      `${suspects.length} edit line(s) start with a 2-char hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}).${matchHint} If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
+    );
+  }
+}
+
 type ResolvedEditSpan = {
   kind: "replace" | "insert";
   index: number;
@@ -447,7 +506,7 @@ function describeEdit(edit: HashlineEdit): string {
         ? `prepend before ${edit.pos.line}#${edit.pos.hash}`
         : "prepend at BOF";
     case "replace_text":
-      return `replace_text \"${previewText(edit.oldText)}\"`;
+      return `replace_text "${previewText(edit.oldText)}"`;
   }
 }
 
@@ -703,7 +762,7 @@ function resolveEditToSpan(
       if (edit.oldText === edit.newText) {
         noopEdits.push({
           editIndex: index,
-          loc: `replace_text \"${previewText(edit.oldText)}\"`,
+          loc: `replace_text "${previewText(edit.oldText)}"`,
           currentContent: edit.oldText,
         });
         return null;
@@ -881,6 +940,7 @@ export function applyHashlineEdits(
     throw new Error(formatMismatchError(mismatches, lineIndex.fileLines, retryLines));
   }
 
+  warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
   maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
 
   const seenSpanKeys = new Set<string>();

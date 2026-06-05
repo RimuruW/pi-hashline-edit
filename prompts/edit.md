@@ -27,7 +27,7 @@ Examples:
 Rules:
 - Anchors define the span being replaced; `lines` is the complete new content for that whole span. To replace more than one line, set `end` — do not rely on a single `pos`.
 - Do not copy boundary content into `lines`. The text after `:` in an anchor is for your reference only; including a neighboring line's content in `lines` duplicates that line.
-- `lines` is literal file content: no `LINE#HASH:` prefix, no leading `+`/`-`. Match indentation exactly.
+- `lines` is literal file content: no `LINE#HASH:` prefix, no bare `HH:` hash, no leading `+`/`-`. The anchor goes in `pos`/`end` only — never copy a hash you saw in `read` output into `lines`. Match indentation exactly.
 - Do not guess, shift, or construct anchors. Copy them from the most recent `read` of this file.
 - Do not emit overlapping or adjacent edits — merge them into one.
 
