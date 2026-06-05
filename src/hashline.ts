@@ -408,32 +408,24 @@ function maybeWarnSuspiciousUnicodeEscapePlaceholder(
 }
 
 /**
- * Reject or warn on edit content that carries a hash the model copied out of
- * `read` output instead of literal file text (issue #24, e.g.
+ * Warn on edit content that may carry a hash the model copied out of `read`
+ * output instead of literal file text (issue #24, e.g.
  * `lines: ["KK:### heading"]`). Companion to `assertNoDisplayPrefixes`, which
- * handles the unambiguous full `LINE#HASH:` form on shape alone; this is the
- * bare-prefix variant that needs the file's hash set to disambiguate.
+ * handles the unambiguous full `LINE#HASH:` form on shape alone.
  *
- * Bare `HH:` prefixes are ambiguous on shape alone, so two tiers run against
- * the file's own hash set:
- *  - HARD REJECT when the 2-char prefix equals the hash of an existing line in
- *    this file. A coincidence is near-impossible; this is almost certainly an
- *    anchor copied into content. Erroring before any write keeps it safe.
- *  - WARN (no content change) when >= 2 lines merely *look* like bare prefixes
- *    but none match the hash set. Recall is partial — the model often copies
- *    hashes of lines this edit deletes, or of other files — so a miss cannot
- *    prove the content is legitimate. The warning routes to the model via
- *    `text`; it keeps its content and decides. This stays within strict
- *    semantics: detect and surface, never silently patch.
+ * Bare `HH:` prefixes are ambiguous: the hash is only 8 bits, and legitimate
+ * file content can contain short keys / abbreviations such as `TS:` or `PR:`.
+ * Therefore this detector never rejects on bare shape or hash-set membership;
+ * it surfaces a warning and preserves strict semantics by writing content
+ * verbatim instead of silently patching it.
  */
-function rejectOrWarnBareHashPrefixLines(
+function warnBareHashPrefixLines(
   edits: HashlineEdit[],
   fileLines: string[],
   warnings: string[],
 ): void {
-  // Collect bare-prefix suspects up front: regex only, no file hashing. Almost
-  // every edit has none, so this lets the common path bail before paying for
-  // the file hash set below.
+  // Collect bare-prefix suspects up front: regex only. Almost every edit has
+  // none, so this lets the common path bail before paying for file hashes.
   const suspects: { line: string; hash: string }[] = [];
   for (const edit of edits) {
     if (edit.op === "replace_text") continue;
@@ -445,19 +437,14 @@ function rejectOrWarnBareHashPrefixLines(
   if (suspects.length === 0) return;
 
   const fileHashSet = new Set(fileLines.map((line, i) => computeLineHash(i + 1, line)));
-  for (const { line, hash } of suspects) {
-    if (fileHashSet.has(hash)) {
-      throw new Error(
-        `[E_INVALID_PATCH] "lines" contains "${hash}:" — "${hash}" is the hash of an existing line in this file, so this looks like a "LINE#HASH" anchor copied into the content rather than literal text. Anchors belong in "pos"/"end" only. Re-read the file and resend "lines" as literal file content. Offending line: ${JSON.stringify(line)}`,
-      );
-    }
-  }
+  const matchCount = suspects.filter(({ hash }) => fileHashSet.has(hash)).length;
 
-  // No suspect matched the hash set: low confidence. Only warn once enough
-  // lines look suspicious, to avoid flagging a lone legitimate "HH:" YAML key.
-  if (suspects.length >= 2) {
+  if (matchCount > 0 || suspects.length >= 2) {
+    const matchHint = matchCount > 0
+      ? ` ${matchCount} prefix(es) match existing line hashes in this file.`
+      : "";
     warnings.push(
-      `${suspects.length} edit line(s) start with a 2-char hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}). If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
+      `${suspects.length} edit line(s) start with a 2-char hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}).${matchHint} If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
     );
   }
 }
@@ -519,7 +506,7 @@ function describeEdit(edit: HashlineEdit): string {
         ? `prepend before ${edit.pos.line}#${edit.pos.hash}`
         : "prepend at BOF";
     case "replace_text":
-      return `replace_text \"${previewText(edit.oldText)}\"`;
+      return `replace_text "${previewText(edit.oldText)}"`;
   }
 }
 
@@ -775,7 +762,7 @@ function resolveEditToSpan(
       if (edit.oldText === edit.newText) {
         noopEdits.push({
           editIndex: index,
-          loc: `replace_text \"${previewText(edit.oldText)}\"`,
+          loc: `replace_text "${previewText(edit.oldText)}"`,
           currentContent: edit.oldText,
         });
         return null;
@@ -936,7 +923,7 @@ export function applyHashlineEdits(
     throw new Error(formatMismatchError(mismatches, lineIndex.fileLines, retryLines));
   }
 
-  rejectOrWarnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
+  warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
   maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
 
   const seenSpanKeys = new Set<string>();

@@ -68,19 +68,20 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
     return applyHashlineEdits(file, resolveEditAnchors(toolEdits));
   }
 
-  it("hard-rejects a bare prefix whose hash matches an existing file line", () => {
-    // "NK" is the hash of line 2 ("beta"); copying it into content is the bug.
-    expect(() =>
-      applyTool([
-        { op: "replace", pos: anchor, lines: ["NK:### heading", "real content"] },
-      ]),
-    ).toThrow(/^\[E_INVALID_PATCH\]/);
+  it("warns (does not reject) when a bare prefix matches an existing file line hash", () => {
+    // "NK" is the hash of line 2 ("beta"), but 2-char hashes can collide with
+    // legitimate literal content. Warn only; never silently patch or reject.
+    const result = applyTool([
+      { op: "replace", pos: anchor, lines: ["NK:### heading", "real content"] },
+    ]);
+    expect(result.warnings?.some((w) => /match existing line hashes/.test(w))).toBe(true);
+    expect(result.content).toContain("NK:### heading");
   });
 
-  it("includes the offending hash and a re-read hint in the rejection", () => {
-    expect(() =>
-      applyTool([{ op: "replace", pos: anchor, lines: ['NK:text'] }]),
-    ).toThrow(/"NK".*Re-read the file/s);
+  it("preserves valid literal 'HH:' content even when HH exists in the file hash set", () => {
+    const result = applyTool([{ op: "replace", pos: anchor, lines: ["NK:text"] }]);
+    expect(result.warnings?.some((w) => /match existing line hashes/.test(w))).toBe(true);
+    expect(result.content).toContain("NK:text");
   });
 
   it("warns (does not reject) when bare prefixes miss the file hash set", () => {
