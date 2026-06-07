@@ -46,6 +46,19 @@ describe("applyHashlineEdits — basic operations", () => {
     expect(result.content).toBe("aaa\nBBB\nCCC\nddd");
   });
 
+  it("replaces a range of lines with interior check anchors", () => {
+    const content = "aaa\nbbb\nccc\nddd";
+    const edits: HashlineEdit[] = [{
+      op: "replace",
+      pos: makeTag(1, "aaa"),
+      end: makeTag(4, "ddd"),
+      check: [makeTag(2, "bbb"), makeTag(3, "ccc")],
+      lines: ["AAA", "BBB", "CCC", "DDD"],
+    }];
+    const result = applyHashlineEdits(content, edits);
+    expect(result.content).toBe("AAA\nBBB\nCCC\nDDD");
+  });
+
   it("deletes a range of lines", () => {
     const content = "aaa\nbbb\nccc\nddd";
     const edits: HashlineEdit[] = [{

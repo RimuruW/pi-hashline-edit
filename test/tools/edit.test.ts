@@ -66,6 +66,26 @@ describe("registerEditTool", () => {
 		).toBe(true);
 	});
 
+	it("publishes a schema that accepts range check anchors", () => {
+		const ajv = new Ajv({ allErrors: true });
+		const validate = ajv.compile(hashlineEditToolSchema as any);
+
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [
+					{
+						op: "replace",
+						pos: "1#ZZ",
+						end: "3#PP",
+						check: ["2#MQ"],
+						lines: ["x"],
+					},
+				],
+			}),
+		).toBe(true);
+	});
+
 	it("publishes a schema with no top-level native text-replace fields", () => {
 		const ajv = new Ajv({ allErrors: true });
 		const validate = ajv.compile(hashlineEditToolSchema as any);

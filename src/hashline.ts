@@ -11,7 +11,13 @@ import { throwIfAborted } from "./runtime";
 
 export type Anchor = { line: number; hash: string; textHint?: string };
 export type HashlineEdit =
-	| { op: "replace"; pos: Anchor; end?: Anchor; lines: string[] }
+	| {
+			op: "replace";
+			pos: Anchor;
+			end?: Anchor;
+			check?: Anchor[];
+			lines: string[];
+	  }
 	| { op: "append"; pos?: Anchor; lines: string[] }
 	| { op: "prepend"; pos?: Anchor; lines: string[] }
 	| { op: "replace_text"; oldText: string; newText: string };
@@ -315,7 +321,15 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  * - no anchors → file-level append/prepend (only for those ops)
  */
 
-const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
+const ITEM_KEYS = new Set([
+	"op",
+	"pos",
+	"end",
+	"check",
+	"lines",
+	"oldText",
+	"newText",
+]);
 
 function isStringArray(value: unknown): value is string[] {
 	return (
@@ -355,6 +369,9 @@ function assertEditItem(edit: Record<string, unknown>, index: number): void {
 			`Edit ${index} field "end" must be a string when provided.`,
 		);
 	}
+	if ("check" in edit && !isStringArray(edit.check)) {
+		throw new Error(`Edit ${index} field "check" must be a string array.`);
+	}
 	if ("oldText" in edit && typeof edit.oldText !== "string") {
 		throw new Error(
 			`Edit ${index} field "oldText" must be a string when provided.`,
@@ -375,7 +392,7 @@ function assertEditItem(edit: Record<string, unknown>, index: number): void {
 				`[E_BAD_OP] Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`,
 			);
 		}
-		if ("pos" in edit || "end" in edit || "lines" in edit) {
+		if ("pos" in edit || "end" in edit || "check" in edit || "lines" in edit) {
 			throw new Error(
 				`Edit ${index} with op "replace_text" only supports "oldText" and "newText".`,
 			);
@@ -399,9 +416,21 @@ function assertEditItem(edit: Record<string, unknown>, index: number): void {
 		);
 	}
 
+	if (edit.op === "replace" && "check" in edit && typeof edit.end !== "string") {
+		throw new Error(
+			`[E_BAD_OP] Edit ${index} with op "replace" supports "check" only when "end" is provided for a range replace.`,
+		);
+	}
+
 	if ((edit.op === "append" || edit.op === "prepend") && "end" in edit) {
 		throw new Error(
 			`[E_BAD_OP] Edit ${index} with op "${edit.op}" does not support "end". Use "pos" or omit it for file boundary insertion.`,
+		);
+	}
+
+	if ((edit.op === "append" || edit.op === "prepend") && "check" in edit) {
+		throw new Error(
+			`[E_BAD_OP] Edit ${index} with op "${edit.op}" does not support "check". Use "check" only with range replace.`,
 		);
 	}
 }
@@ -418,6 +447,9 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 					op: "replace",
 					pos: parseAnchorRef(edit.pos!),
 					...(edit.end ? { end: parseAnchorRef(edit.end) } : {}),
+					...(edit.check
+						? { check: edit.check.map((ref) => parseAnchorRef(ref)) }
+						: {}),
 					lines: hashlineParseText(edit.lines ?? null),
 				});
 				break;
@@ -458,6 +490,7 @@ export type HashlineToolEdit = {
 	op: string;
 	pos?: string;
 	end?: string;
+	check?: string[];
 	lines?: string[];
 	oldText?: string;
 	newText?: string;
@@ -620,6 +653,9 @@ function cloneHashlineEdit(edit: HashlineEdit): HashlineEdit {
 				op: "replace",
 				pos: { ...edit.pos },
 				...(edit.end ? { end: { ...edit.end } } : {}),
+				...(edit.check
+					? { check: edit.check.map((anchor) => ({ ...anchor })) }
+					: {}),
 				lines: [...edit.lines],
 			};
 		case "append":
@@ -987,15 +1023,39 @@ function validateAnchorEdits(
 							`[E_BAD_OP] Range start line ${edit.pos.line} must be <= end line ${edit.end.line}`,
 						);
 					}
+					for (const checkRef of edit.check ?? []) {
+						if (
+							checkRef.line < edit.pos.line ||
+							checkRef.line > edit.end.line
+						) {
+							throw new Error(
+								`[E_BAD_OP] Range check anchor ${checkRef.line}#${checkRef.hash} must be within ${edit.pos.line}#${edit.pos.hash}-${edit.end.line}#${edit.end.hash}.`,
+							);
+						}
+					}
 					const startOk = validate(edit.pos);
 					const endOk = validate(edit.end);
+					let checksOk = true;
+					for (const checkRef of edit.check ?? []) {
+						if (!validate(checkRef)) {
+							checksOk = false;
+						}
+					}
 					if (!startOk && endOk) {
 						retryLines.add(edit.end.line);
 					}
 					if (startOk && !endOk) {
 						retryLines.add(edit.pos.line);
 					}
-					if (!startOk || !endOk) continue;
+					if (!checksOk) {
+						retryLines.add(edit.pos.line);
+						retryLines.add(edit.end.line);
+					}
+					if (!startOk || !endOk || !checksOk) continue;
+				} else if (edit.check?.length) {
+					throw new Error(
+						`[E_BAD_OP] Replace check anchors require an "end" anchor for a range replace.`,
+					);
 				} else if (!validate(edit.pos)) {
 					continue;
 				}

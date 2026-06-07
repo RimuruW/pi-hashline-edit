@@ -17,6 +17,27 @@ describe("resolveEditAnchors", () => {
 		expect(resolved[0]).toHaveProperty("end");
 	});
 
+	it("resolves replace range check anchors", () => {
+		const edits: HashlineToolEdit[] = [
+			{
+				op: "replace",
+				pos: "1#ZZ",
+				end: "3#PP",
+				check: ["2#MQ"],
+				lines: ["a", "b"],
+			},
+		];
+		const resolved = resolveEditAnchors(edits);
+		const r = resolved[0] as {
+			op: "replace";
+			pos: Anchor;
+			end?: Anchor;
+			check?: Anchor[];
+			lines: string[];
+		};
+		expect(r.check).toEqual([{ line: 2, hash: "MQ" }]);
+	});
+
 	it("resolves replace with pos only (single-line)", () => {
 		const edits: HashlineToolEdit[] = [
 			{ op: "replace", pos: "5#MQ", lines: ["new"] },
@@ -44,6 +65,15 @@ describe("resolveEditAnchors", () => {
 	it("throws on replace with no anchors", () => {
 		const edits: HashlineToolEdit[] = [{ op: "replace", lines: ["new"] }];
 		expect(() => resolveEditAnchors(edits)).toThrow(/requires a "pos" anchor/i);
+	});
+
+	it("rejects replace check anchors without an end anchor", () => {
+		const edits: HashlineToolEdit[] = [
+			{ op: "replace", pos: "1#ZZ", check: ["2#MQ"], lines: ["new"] },
+		];
+		expect(() => resolveEditAnchors(edits)).toThrow(
+			/\[E_BAD_OP\].*check.*end/i,
+		);
 	});
 
 	it("throws on malformed pos for append (not silently degraded to EOF)", () => {
@@ -109,6 +139,15 @@ describe("resolveEditAnchors", () => {
 		);
 	});
 
+	it("rejects append with check", () => {
+		const edits: HashlineToolEdit[] = [
+			{ op: "append", pos: "5#MQ", check: ["6#PP"], lines: ["new"] },
+		];
+		expect(() => resolveEditAnchors(edits)).toThrow(
+			/\[E_BAD_OP\].*append.*check/i,
+		);
+	});
+
 	it("resolves prepend with pos", () => {
 		const edits: HashlineToolEdit[] = [
 			{ op: "prepend", pos: "5#MQ", lines: ["new"] },
@@ -161,6 +200,21 @@ describe("resolveEditAnchors", () => {
 		];
 		expect(() => resolveEditAnchors(edits)).toThrow(
 			/lines" must be a string array/i,
+		);
+	});
+
+	it("rejects non-array check input", () => {
+		const edits: HashlineToolEdit[] = [
+			{
+				op: "replace",
+				pos: "1#ZZ",
+				end: "3#PP",
+				check: "2#MQ",
+				lines: ["new"],
+			} as unknown as HashlineToolEdit,
+		];
+		expect(() => resolveEditAnchors(edits)).toThrow(
+			/check" must be a string array/i,
 		);
 	});
 

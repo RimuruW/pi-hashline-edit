@@ -96,6 +96,12 @@ const hashlineEditItemSchema = Type.Object(
 					"inclusive end anchor (LINE#HASH) of the range to replace; without end only the single line at pos is replaced",
 			}),
 		),
+		check: Type.Optional(
+			Type.Array(Type.String(), {
+				description:
+					"additional LINE#HASH anchors inside a range replace to stale-check interior lines; only valid with replace + end",
+			}),
+		),
 		lines: Type.Optional(hashlineEditLinesSchema),
 		oldText: Type.Optional(
 			Type.String({

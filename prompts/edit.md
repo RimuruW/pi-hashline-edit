@@ -3,7 +3,7 @@ Patch a text file using `LINE#HASH` anchors copied verbatim from `read`.
 Submit one `edit` call per file. All operations for that file go in a single `edits` array; every edit must set `op`; anchors within one call must all come from the same pre-edit read.
 
 Ops:
-- `replace` — replace the line at `pos`. Add `end` to replace the inclusive range `pos`..`end`. Without `end`, only the single line at `pos` is replaced — even if `lines` has many entries.
+- `replace` — replace the line at `pos`. Add `end` to replace the inclusive range `pos`..`end`. For range replaces, optionally add `check` with interior `LINE#HASH` anchors to stale-check lines between the endpoints. Without `end`, only the single line at `pos` is replaced — even if `lines` has many entries.
 - `append` — insert `lines` after `pos`; omit `pos` to append at EOF.
 - `prepend` — insert `lines` before `pos`; omit `pos` to insert at BOF.
 - `replace_text` — one edit item `{ "op": "replace_text", "oldText": ..., "newText": ... }` replacing the one exact unique occurrence. Only when a match is guaranteed unique; otherwise read first and use anchors. `oldText`/`newText` are only valid with `op` set to `replace_text`.
@@ -16,7 +16,7 @@ Examples:
 ```
 ```json
 { "path": "src/main.ts", "edits": [
-  { "op": "replace", "pos": "5#AB", "end": "8#QV", "lines": [
+  { "op": "replace", "pos": "5#AB", "end": "8#QV", "check": ["6#KT", "7#BH"], "lines": [
     "function greet(name) {",
     "  return `Hello, ${name}`;",
     "}"
@@ -26,6 +26,7 @@ Examples:
 
 Rules:
 - Anchors define the span being replaced; `lines` is the complete new content for that whole span. To replace more than one line, set `end` — do not rely on a single `pos`.
+- For range replaces over more than a few lines, include `check` anchors copied from interior lines inside `pos`..`end`; `check` never changes the span, it only rejects stale interior content.
 - Do not copy boundary content into `lines`. The text after `:` in an anchor is for your reference only; including a neighboring line's content in `lines` duplicates that line.
 - `lines` is literal file content: no `LINE#HASH:` prefix, no bare `HH:` hash, no leading `+`/`-`. The anchor goes in `pos`/`end` only — never copy a hash you saw in `read` output into `lines`. Match indentation exactly.
 - Do not guess, shift, or construct anchors. Copy them from the most recent `read` of this file.

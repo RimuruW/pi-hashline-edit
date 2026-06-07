@@ -54,12 +54,31 @@ Edits use the `LINE#HASH` anchors from `read` output to target lines precisely:
 
 | Op | Purpose | Fields |
 |---|---|---|
-| `replace` | Replace one line (`pos`) or an inclusive range (`pos` + `end`). | `pos` required, `end` optional, `lines` |
+| `replace` | Replace one line (`pos`) or an inclusive range (`pos` + `end`). Use `check` to stale-check interior range anchors without changing the replaced span. | `pos` required, `end` optional, `check` optional, `lines` |
 | `append` | Insert lines after `pos`. Omit `pos` to append at EOF. | `pos` optional, `lines` |
 | `prepend` | Insert lines before `pos`. Omit `pos` to prepend at BOF. | `pos` optional, `lines` |
 | `replace_text` | Replace an exact unique substring anywhere in the file. Fails if the text is not found or matches more than once. | `oldText`, `newText` |
 
 All edits in a single call validate against the same pre-edit snapshot and apply bottom-up, so line numbers stay consistent across operations.
+
+For larger range replaces, include `check` anchors copied from interior lines in the same read:
+
+```json
+{
+  "path": "src/main.ts",
+  "edits": [
+    {
+      "op": "replace",
+      "pos": "10#MQ",
+      "end": "20#VR",
+      "check": ["12#KT", "15#BH", "18#WS"],
+      "lines": ["..."]
+    }
+  ]
+}
+```
+
+`check` anchors do not expand or move the replace range; they only reject the edit if interior content has gone stale.
 
 ### Chained edits
 

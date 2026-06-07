@@ -107,6 +107,57 @@ describe("applyHashlineEdits — error handling", () => {
 		}
 	});
 
+	it("rejects stale interior range check anchors and returns range endpoints", () => {
+		const content = "aaa\nBBB\nccc\nddd";
+		const validStart = makeTag(1, "aaa");
+		const validEnd = makeTag(4, "ddd");
+
+		try {
+			applyHashlineEdits(content, [
+				{
+					op: "replace",
+					pos: validStart,
+					end: validEnd,
+					check: [makeTag(2, "bbb"), makeTag(3, "ccc")],
+					lines: ["AAA", "BBB", "CCC", "DDD"],
+				},
+			]);
+			throw new Error(
+				"Expected applyHashlineEdits to throw for stale range check anchor.",
+			);
+		} catch (error: unknown) {
+			if (!(error instanceof Error)) {
+				throw error;
+			}
+			expect(error.message).toContain("Stale refs:");
+			expect(error.message).toContain("2#");
+			expect(error.message).toContain(
+				`>>> ${validStart.line}#${validStart.hash}:aaa`,
+			);
+			expect(error.message).toContain(
+				`>>> ${validEnd.line}#${validEnd.hash}:ddd`,
+			);
+			expect(error.message).toMatch(/>>> 2#[A-Z]{2}:BBB/);
+		}
+	});
+
+	it("rejects range check anchors outside the replace range", () => {
+		const content = "aaa\nbbb\nccc\nddd";
+		const edits: HashlineEdit[] = [
+			{
+				op: "replace",
+				pos: makeTag(2, "bbb"),
+				end: makeTag(3, "ccc"),
+				check: [makeTag(4, "ddd")],
+				lines: ["BBB", "CCC"],
+			},
+		];
+
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/\[E_BAD_OP\].*check anchor.*within 2#/i,
+		);
+	});
+
 	it("rejects overlapping replace ranges in one request", () => {
 		const content = "aaa\nbbb\nccc\nddd";
 		expect(() =>
