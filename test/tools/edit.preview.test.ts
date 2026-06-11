@@ -39,6 +39,21 @@ describe("computeEditPreview", () => {
     });
   });
 
+  it("returns an error preview for a missing file", async () => {
+    await withTempFile("existing.txt", "aaa\n", async ({ cwd }) => {
+      const preview = await computeEditPreview(
+        {
+          path: "missing.txt",
+          edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+        },
+        cwd,
+      );
+
+      expect(preview).toEqual({ error: "File not found: missing.txt" });
+      expect(vi.mocked(fileKindMod.loadFileKindAndText)).not.toHaveBeenCalled();
+    });
+  });
+
   it("returns a diff for a normalized top-level replace before execution", async () => {
     await withTempFile("sample.txt", "alpha\nbeta\ngamma\n", async ({ cwd }) => {
       vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({

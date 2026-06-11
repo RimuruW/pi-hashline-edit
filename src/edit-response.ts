@@ -311,12 +311,13 @@ export function buildNoopResponse(input: NoopResponseInput): ToolResult {
 					)
 				: undefined;
 
+	const warningsBlock = warningsBlockOf(warnings);
 	const text =
 		returnMode === "full"
-			? `No changes made to ${path}\nClassification: noop${outlineBlockOf(outline!.text)}\n\nFull content is available in details.fullContent.`
+			? `No changes made to ${path}\nClassification: noop${warningsBlock}${outlineBlockOf(outline!.text)}\n\nFull content is available in details.fullContent.`
 			: returnMode === "ranges"
-				? `No changes made to ${path}\nClassification: noop${outlineBlockOf(outline!.text)}\n\nRequested range payloads are available in details.returnedRanges.`
-				: `No changes made to ${path}\nClassification: noop\n${noopDetailsText}`;
+				? `No changes made to ${path}\nClassification: noop${warningsBlock}${outlineBlockOf(outline!.text)}\n\nRequested range payloads are available in details.returnedRanges.`
+				: `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${warningsBlock}`;
 
 	const metrics = buildMetrics({
 		classification: "noop",

@@ -63,18 +63,18 @@ All edits in a single call validate against the same pre-edit snapshot and apply
 
 ### Chained edits
 
-After a successful edit, the result includes an `--- Updated anchors ---` block with fresh `LINE#HASH` references for the changed region. These can be used directly in the next `edit` call on the same file without a full re-read, provided the next edit targets the same or nearby lines. For distant changes, use `read` first.
+After a successful edit in the default `changed` return mode, the result text includes an `--- Anchors A-B ---` block with fresh `LINE#HASH` references for the changed region. These can be used directly in the next `edit` call on the same file without a full re-read, provided the next edit targets the same or nearby lines. For distant changes, use `read` first.
 
 ### Diff preview
 
-Each edit result includes a compact `Diff preview:` block showing the changed lines with `+`/`-` markers and their new `LINE#HASH` anchors, making quick follow-up edits possible without a full re-read.
+The full diff is stored in `details.diff` for the host UI. The model-visible text stays compact and focuses on fresh anchors, warnings, and retry guidance.
 
 ## Design Decisions
 
 - **Stale anchors fail.** A hash mismatch means the file has changed since the last `read`. The error includes a snippet with fresh `LINE#HASH` references for the affected lines for immediate retry.
 - **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
 - **Strict patch content.** If `lines` contains `LINE#HASH:` display prefixes or diff `+`/`-` markers, the edit is rejected with `[E_INVALID_PATCH]`. The model must send literal file content; the runtime does not silently strip accidental prefixes.
-- **Hidden legacy compatibility.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the tool attempts an exact unique match. Usage is surfaced to the interactive UI so the operator can see that the model isn't using hashline mode.
+- **Native edit normalization.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the request is normalized into `op: "replace_text"` and uses the same strict exact-unique-match semantics as any other `replace_text` edit. Inexact or non-unique matches are rejected; there is no fuzzy legacy fallback or separate compatibility notifier.
 - **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated without replacing the symlink. Hard-linked files are updated in place to preserve the shared inode. File permissions are preserved across atomic renames.
 - **Per-file mutation queue.** Edits queue by the canonical write target, so concurrent edits through different symlink paths still serialize onto the same underlying file.
 

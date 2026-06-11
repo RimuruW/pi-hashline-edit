@@ -38,6 +38,38 @@ describe("edit tool noop + warnings", () => {
     });
   });
 
+  it("keeps validation warnings visible when the edit is a noop", async () => {
+    await withTempFile("sample.txt", "he said “hi”\nkeep\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const editTool = getTool("edit");
+      const asciiLine = 'he said "hi"';
+
+      const result = await editTool.execute(
+        "e1",
+        {
+          path: "sample.txt",
+          edits: [
+            {
+              op: "replace",
+              pos: `1#${computeLineHash(1, asciiLine)}:${asciiLine}`,
+              lines: ["he said “hi”"],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        { cwd, hasUI: true, ui: { notify() {} } } as any,
+      );
+
+      expect(getText(result)).toContain("Classification: noop");
+      expect(getText(result)).toContain("Warnings:");
+      expect(getText(result)).toContain("Accepted fuzzy anchor validation");
+      expect(result.details?.metrics?.warnings).toBe(1);
+      expect(await readFile(path, "utf-8")).toBe("he said “hi”\nkeep\n");
+    });
+  });
+
   it("emits a boundary duplication warning without blocking the edit", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();

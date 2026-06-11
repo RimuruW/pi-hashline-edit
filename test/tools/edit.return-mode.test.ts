@@ -1,11 +1,44 @@
 import { describe, expect, it } from "vitest";
 import register from "../../index";
+import { assertEditRequest } from "../../src/edit";
 import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 function getText(result: { content: Array<{ text?: string }> }): string {
   return result.content[0]?.text ?? "";
 }
+
+describe("assertEditRequest returnRanges validation", () => {
+  const baseRequest = {
+    path: "sample.txt",
+    returnMode: "ranges",
+    edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
+  };
+
+  it("rejects a non-object returnRanges item", () => {
+    expect(() =>
+      assertEditRequest({ ...baseRequest, returnRanges: [42] }),
+    ).toThrow(/returnRanges\[0\] must be an object/);
+  });
+
+  it("rejects a non-positive returnRanges start", () => {
+    expect(() =>
+      assertEditRequest({ ...baseRequest, returnRanges: [{ start: 0 }] }),
+    ).toThrow(/returnRanges\[0\]\.start must be a positive integer/);
+  });
+
+  it("rejects a non-positive returnRanges end", () => {
+    expect(() =>
+      assertEditRequest({ ...baseRequest, returnRanges: [{ start: 1, end: 0 }] }),
+    ).toThrow(/returnRanges\[0\]\.end must be a positive integer/);
+  });
+
+  it("rejects a returnRanges end before start", () => {
+    expect(() =>
+      assertEditRequest({ ...baseRequest, returnRanges: [{ start: 5, end: 3 }] }),
+    ).toThrow(/returnRanges\[0\]\.end must be >= start/);
+  });
+});
 
 describe("edit tool returnMode", () => {
   it("returns the post-edit file content when returnMode is full", async () => {
