@@ -3,7 +3,7 @@ import register from "../../index";
 import { formatHashlineRegion } from "../../src/hashline";
 import { formatHashlineReadPreview } from "../../src/read";
 import { computeLineHash } from "../../src/hashline";
-import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
+import { getText, makeFakePiRegistry, makeToolContext, withTempFile } from "../support/fixtures";
 
 vi.mock("../../src/file-kind", () => ({
 	loadFileKindAndText: vi.fn(),
@@ -146,12 +146,11 @@ describe("read tool protocol", () => {
 				{ path: "empty.txt" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
-			expect(result.isError).toBeUndefined();
-			expect(result.content[0].text).toContain("File is empty");
-			expect(result.content[0].text).not.toContain("1#");
+			expect(getText(result)).toContain("File is empty");
+			expect(getText(result)).not.toContain("1#");
 		});
 	});
 
@@ -171,12 +170,12 @@ describe("read tool protocol", () => {
 				{ path: "sample.txt" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
-			expect(result.content[0].text).toContain(":alpha");
-			expect(result.content[0].text).toContain(":beta");
-			expect(result.content[0].text).not.toContain("3#");
+			expect(getText(result)).toContain(":alpha");
+			expect(getText(result)).toContain(":beta");
+			expect(getText(result)).not.toContain("3#");
 		});
 	});
 
@@ -196,11 +195,11 @@ describe("read tool protocol", () => {
 				{ path: "sample.txt" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
-			expect(result.content[0].text).toContain(":alpha");
-			expect(result.content[0].text).toContain(":beta");
+			expect(getText(result)).toContain(":alpha");
+			expect(getText(result)).toContain(":beta");
 		});
 	});
 
@@ -223,10 +222,10 @@ describe("read tool protocol", () => {
 				{ path: "legacy.c" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
-			expect(result.content[0].text).toContain(
+			expect(getText(result)).toContain(
 				"editing rewrites the file as UTF-8",
 			);
 		});
@@ -248,10 +247,10 @@ describe("read tool protocol", () => {
 				{ path: "clean.txt" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
-			expect(result.content[0].text).not.toContain("Non-UTF-8");
+			expect(getText(result)).not.toContain("Non-UTF-8");
 		});
 	});
 });

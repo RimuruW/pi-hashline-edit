@@ -3,11 +3,7 @@ import { readFile, writeFile } from "fs/promises";
 import register from "../../index";
 import { normalizeEditRequest } from "../../src/edit-normalize";
 import { computeLineHash } from "../../src/hashline";
-import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
-
-function getText(result: { content: Array<{ text?: string }> }): string {
-	return result.content[0]?.text ?? "";
-}
+import { getText, makeFakePiRegistry, makeToolContext, withTempFile } from "../support/fixtures";
 
 describe("normalizeEditRequest", () => {
 	it("folds top-level camelCase oldText/newText into a replace_text edit", () => {
@@ -166,7 +162,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					{ path: "sample.txt", oldText: "bbb", newText: "BBB" },
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				);
 
 				expect(getText(result)).toContain("--- Anchors");
@@ -189,7 +185,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 				{ path: "sample.txt", old_text: "world", new_text: "universe" },
 				undefined,
 				undefined,
-				{ cwd, hasUI: true, ui: { notify() {} } } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(getText(result)).toContain("--- Anchors");
@@ -211,7 +207,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					{ path: "sample.txt", edits: [], oldText: "bbb", newText: "BBB" },
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				);
 
 				expect(getText(result)).toContain("--- Anchors");
@@ -238,7 +234,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				);
 
 				expect(getText(result)).toContain("--- Anchors");
@@ -261,7 +257,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					{ path: "sample.txt", oldText: "dup", newText: "X" },
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				),
 			).rejects.toThrow(/multiple exact matches|re-read and use hashline/i);
 		});
@@ -281,7 +277,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					{ path: "sample.txt", oldText: 'he said "hi"', newText: "HELLO" },
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				),
 			).rejects.toThrow(/no exact unique match|re-read and use hashline/i);
 		});
@@ -307,7 +303,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				),
 			).rejects.toThrow(/unknown or unsupported fields/i);
 		});
@@ -325,7 +321,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 				{ path: "legacy.txt", oldText: "a", newText: "A" },
 				undefined,
 				undefined,
-				{ cwd, hasUI: true, ui: { notify() {} } } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(getText(result)).toContain("rewrote the file as UTF-8");
@@ -344,7 +340,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 				{ path: "valid.txt", oldText: "a", newText: "A" },
 				undefined,
 				undefined,
-				{ cwd, hasUI: true, ui: { notify() {} } } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(getText(result)).not.toContain("Non-UTF-8");
@@ -365,7 +361,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 				{ path: "legacy.txt", oldText: "a", newText: "a" },
 				undefined,
 				undefined,
-				{ cwd, hasUI: true, ui: { notify() {} } } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(getText(result)).not.toContain("rewrote the file as UTF-8");
@@ -393,7 +389,7 @@ describe("edit tool: bare oldText/newText edit items", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd, hasUI: true, ui: { notify() {} } } as any,
+					makeToolContext(cwd),
 				);
 
 				expect(getText(result)).toContain("--- Anchors");

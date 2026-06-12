@@ -7,12 +7,18 @@ import {
 	registerEditTool,
 } from "../../src/edit";
 import { computeLineHash } from "../../src/hashline";
-import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
+import {
+	makeFakePiRegistry,
+	makeTestTheme,
+	makeToolContext,
+	withTempFile,
+	type ToolRenderContext,
+} from "../support/fixtures";
 
 describe("assertEditRequest", () => {
 	it("rejects unknown or unsupported root fields", () => {
 		expect(() =>
-			assertEditRequest({ path: "a.ts", legacy_field: [] } as any),
+			assertEditRequest({ path: "a.ts", legacy_field: [] }),
 		).toThrow(/unknown or unsupported fields/i);
 	});
 
@@ -24,7 +30,7 @@ describe("assertEditRequest", () => {
 				path: "a.ts",
 				oldText: "before",
 				newText: "after",
-			} as any),
+			}),
 		).toThrow(/unknown or unsupported fields/i);
 	});
 
@@ -37,7 +43,7 @@ describe("assertEditRequest", () => {
 				path: "a.ts",
 				returnMode: "full",
 				edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-			} as any),
+			}),
 		).toThrow(/unknown or unsupported fields/i);
 
 		expect(() =>
@@ -45,7 +51,7 @@ describe("assertEditRequest", () => {
 				path: "a.ts",
 				returnRanges: [{ start: 1, end: 2 }],
 				edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
-			} as any),
+			}),
 		).toThrow(/unknown or unsupported fields/i);
 	});
 
@@ -54,7 +60,7 @@ describe("assertEditRequest", () => {
 describe("registerEditTool", () => {
 	it("publishes a schema that validates strict hashline payloads", () => {
 		const ajv = new Ajv({ allErrors: true });
-		const validate = ajv.compile(hashlineEditToolSchema as any);
+		const validate = ajv.compile<unknown>(hashlineEditToolSchema);
 
 		expect(
 			validate({
@@ -66,7 +72,7 @@ describe("registerEditTool", () => {
 
 	it("publishes a schema with no top-level native text-replace fields", () => {
 		const ajv = new Ajv({ allErrors: true });
-		const validate = ajv.compile(hashlineEditToolSchema as any);
+		const validate = ajv.compile<unknown>(hashlineEditToolSchema);
 
 		// Native top-level fields are normalized away before validation; the
 		// published schema does not declare them, so AJV rejects them as additional
@@ -75,7 +81,10 @@ describe("registerEditTool", () => {
 			validate({ path: "a.ts", oldText: "before", newText: "after" }),
 		).toBe(false);
 
-		const props = (hashlineEditToolSchema as any).properties;
+		// Widened on purpose: these keys are absent from the schema type, so the
+		// direct property reads below would not compile; the runtime assertions
+		// stay as regression guards against the fields being re-added.
+		const props: Record<string, unknown> = hashlineEditToolSchema.properties;
 		expect(props.oldText).toBeUndefined();
 		expect(props.newText).toBeUndefined();
 		expect(props.old_text).toBeUndefined();
@@ -85,33 +94,21 @@ describe("registerEditTool", () => {
 	});
 
 	it("publishes a top-level object schema for pi tool registration", () => {
-		expect((hashlineEditToolSchema as any).type).toBe("object");
-		expect((hashlineEditToolSchema as any).anyOf).toBeUndefined();
+		expect(hashlineEditToolSchema.type).toBe("object");
+		expect("anyOf" in hashlineEditToolSchema).toBe(false);
 	});
 
 	it("registers the edit tool with a normalization prepareArguments hook", () => {
-		let registered:
-			| {
-					parameters?: any;
-					prepareArguments?: (args: unknown) => unknown;
-			  }
-			| undefined;
-		const pi = {
-			registerTool(tool: {
-				parameters?: any;
-				prepareArguments?: (args: unknown) => unknown;
-			}) {
-				registered = tool;
-			},
-		} as any;
+		const { pi, getTool } = makeFakePiRegistry();
 
 		registerEditTool(pi);
+		const registered = getTool("edit");
 
-		expect(registered?.parameters).toEqual(hashlineEditToolSchema);
-		expect(typeof registered?.prepareArguments).toBe("function");
+		expect(registered.parameters).toEqual(hashlineEditToolSchema);
+		expect(typeof registered.prepareArguments).toBe("function");
 		// The hook folds top-level native fields into edits[].
 		expect(
-			registered?.prepareArguments?.({
+			registered.prepareArguments?.({
 				path: "a.ts",
 				oldText: "x",
 				newText: "y",
@@ -119,6 +116,57 @@ describe("registerEditTool", () => {
 		).toEqual({
 			path: "a.ts",
 			edits: [{ op: "replace_text", oldText: "x", newText: "y" }],
+		});
+	});
+
+	it("rejects an empty edits array without touching the file", async () => {
+		await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
+			const { pi, getTool } = makeFakePiRegistry();
+			registerEditTool(pi);
+			const editTool = getTool("edit");
+
+			await expect(
+				editTool.execute(
+					"e1",
+					{ path: "sample.txt", edits: [] },
+					undefined,
+					undefined,
+					makeToolContext(cwd),
+				),
+			).rejects.toThrow(/No edits provided/);
+
+			expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\n");
+		});
+	});
+
+	it("aborts before mutating the file when the signal is already aborted", async () => {
+		await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
+			const { pi, getTool } = makeFakePiRegistry();
+			registerEditTool(pi);
+			const editTool = getTool("edit");
+			const controller = new AbortController();
+			controller.abort();
+
+			await expect(
+				editTool.execute(
+					"e1",
+					{
+						path: "sample.txt",
+						edits: [
+							{
+								op: "replace",
+								pos: `1#${computeLineHash(1, "aaa")}`,
+								lines: ["AAA"],
+							},
+						],
+					},
+					controller.signal,
+					undefined,
+					makeToolContext(cwd),
+				),
+			).rejects.toThrow(/aborted/i);
+
+			expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\n");
 		});
 	});
 
@@ -143,7 +191,7 @@ describe("registerEditTool", () => {
 					},
 					undefined,
 					undefined,
-					{ cwd } as any,
+					makeToolContext(cwd),
 				),
 			).rejects.toThrow(/lines" must be a string array/i);
 
@@ -162,7 +210,7 @@ describe("registerEditTool", () => {
 				{ edits: [{ op: "append", lines: ["x"] }] },
 				undefined,
 				undefined,
-				{ cwd: process.cwd() } as any,
+				makeToolContext(process.cwd()),
 			),
 		).rejects.toThrow(/requires a non-empty "path" string/i);
 	});
@@ -188,23 +236,23 @@ describe("registerEditTool", () => {
 				editArgs,
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(typeof editTool.renderResult).toBe("function");
 
-			const component = editTool.renderResult(
+			const component = editTool.renderResult!(
 				result,
 				{ expanded: false, isPartial: false },
-				{
-					bold: (text: string) => text,
+				makeTestTheme({
 					fg: (token: string, text: string) => `[${token}]${text}[/${token}]`,
-				},
+				}),
+				// Partial render context: the result renderer reads only these fields.
 				{
 					args: editArgs,
 					isError: false,
 					lastComponent: undefined,
-				} as any,
+				} as unknown as ToolRenderContext,
 			) as { render: (width: number) => string[] };
 
 			const rendered = component.render(200).join("\n");

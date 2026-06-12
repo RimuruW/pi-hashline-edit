@@ -1,57 +1,18 @@
 import { execFile } from "child_process";
 import { describe, expect, it } from "vitest";
-import {
-	access,
-	appendFile,
-	mkdtemp,
-	mkdir,
-	readFile,
-	rm,
-	writeFile,
-} from "fs/promises";
+import { access, appendFile, readFile, rm } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
 import { loadFileKindAndText } from "../../src/file-kind";
-import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
-
-async function createTempRoot(): Promise<string> {
-	const root = join(process.cwd(), ".tmp");
-	await mkdir(root, { recursive: true });
-	return mkdtemp(join(root, "pi-hashline-kind-"));
-}
-
-async function withTempBytes(
-	name: string,
-	bytes: Uint8Array,
-	run: (args: { cwd: string; path: string }) => Promise<void>,
-): Promise<void> {
-	const cwd = await createTempRoot();
-	const path = join(cwd, name);
-	try {
-		await writeFile(path, bytes);
-		await run({ cwd, path });
-	} finally {
-		await rm(cwd, { recursive: true, force: true });
-	}
-}
-
-async function withTempDirectory(
-	name: string,
-	run: (args: { cwd: string; path: string }) => Promise<void>,
-): Promise<void> {
-	const cwd = await createTempRoot();
-	const path = join(cwd, name);
-	try {
-		await mkdir(path, { recursive: true });
-		await run({ cwd, path });
-	} finally {
-		await rm(cwd, { recursive: true, force: true });
-	}
-}
-
-function getText(result: { content: Array<{ text?: string }> }): string {
-	return result.content[0]?.text ?? "";
-}
+import {
+	getText,
+	makeFakePiRegistry,
+	makeTempDir,
+	makeToolContext,
+	withTempBytes,
+	withTempDirectory,
+	withTempFile,
+} from "../support/fixtures";
 
 describe("loadFileKindAndText classification", () => {
 	it("classifies directories explicitly", async () => {
@@ -235,7 +196,7 @@ describe("loadFileKindAndText classification", () => {
 			return;
 		}
 
-		const cwd = await createTempRoot();
+		const cwd = await makeTempDir("pi-hashline-kind-");
 		const pipePath = join(cwd, "sample.pipe");
 		try {
 			await new Promise<void>((resolve, reject) => {
@@ -267,9 +228,7 @@ describe("file kind guards in tools", () => {
 			const readTool = getTool("read");
 
 			await expect(
-				readTool.execute("r1", { path: "nested" }, undefined, undefined, {
-					cwd,
-				} as any),
+				readTool.execute("r1", { path: "nested" }, undefined, undefined, makeToolContext(cwd)),
 			).rejects.toThrow(/Path is a directory: nested/);
 		});
 	});
@@ -293,7 +252,7 @@ describe("file kind guards in tools", () => {
 				{ path: "sample.md" },
 				undefined,
 				undefined,
-				{ cwd } as any,
+				makeToolContext(cwd),
 			);
 
 			expect(getText(result)).toContain("—");
@@ -314,7 +273,7 @@ describe("file kind guards in tools", () => {
 					{ path: "layout.xml" },
 					undefined,
 					undefined,
-					{ cwd } as any,
+					makeToolContext(cwd),
 				);
 
 				const text = getText(result);
@@ -347,7 +306,7 @@ describe("file kind guards in tools", () => {
 					{ path: "layout-utf16.xml" },
 					undefined,
 					undefined,
-					{ cwd } as any,
+					makeToolContext(cwd),
 				),
 			).rejects.toThrow(
 				/binary file: layout-utf16\.xml \(null bytes detected\)/i,
@@ -365,9 +324,7 @@ describe("file kind guards in tools", () => {
 				const readTool = getTool("read");
 
 				await expect(
-					readTool.execute("r1", { path: "sample.bin" }, undefined, undefined, {
-						cwd,
-					} as any),
+					readTool.execute("r1", { path: "sample.bin" }, undefined, undefined, makeToolContext(cwd)),
 				).rejects.toThrow(
 					/Path is a binary file: sample\.bin \(null bytes detected\)/i,
 				);
@@ -389,7 +346,7 @@ describe("file kind guards in tools", () => {
 					{ path: "sample.c" },
 					undefined,
 					undefined,
-					{ cwd } as any,
+					makeToolContext(cwd),
 				);
 
 				expect(getText(result)).toContain("�(");
@@ -417,7 +374,7 @@ describe("file kind guards in tools", () => {
 					{ path: "sample.c", oldText: "int", newText: "long" },
 					undefined,
 					undefined,
-					{ cwd } as any,
+					makeToolContext(cwd),
 				);
 
 				await expect(readFile(path)).resolves.toEqual(
@@ -442,11 +399,47 @@ describe("file kind guards in tools", () => {
 						{ path: "sample.bin", oldText: "int", newText: "long" },
 						undefined,
 						undefined,
-						{ cwd } as any,
+						makeToolContext(cwd),
 					),
 				).rejects.toThrow(/binary file: sample\.bin \(null bytes detected\)/i);
 			},
 		);
+	});
+
+	it("read delegates supported images to the built-in read tool", async () => {
+		const { pi, getTool } = makeFakePiRegistry();
+		register(pi);
+		const readTool = getTool("read");
+
+		const result = await readTool.execute(
+			"r1",
+			{ path: "assets/banner.jpeg" },
+			undefined,
+			undefined,
+			makeToolContext(process.cwd()),
+		);
+
+		// The built-in tool leads with a "Read image file [mime]" text note in
+		// both its inline-image and omitted-image variants; the hashline text
+		// path never produces it, so this pins the delegation seam.
+		expect(getText(result)).toContain("Read image file");
+		expect(getText(result)).not.toMatch(/^\s*\d+#/m);
+	});
+
+	it("edit rejects image files without writing", async () => {
+		const { pi, getTool } = makeFakePiRegistry();
+		register(pi);
+		const editTool = getTool("edit");
+
+		await expect(
+			editTool.execute(
+				"e1",
+				{ path: "assets/banner.jpeg", oldText: "a", newText: "b" },
+				undefined,
+				undefined,
+				makeToolContext(process.cwd()),
+			),
+		).rejects.toThrow(/image file/i);
 	});
 
 	it("edit rejects binary files before reading them as text", async () => {
@@ -468,7 +461,7 @@ describe("file kind guards in tools", () => {
 						},
 						undefined,
 						undefined,
-						{ cwd } as any,
+						makeToolContext(cwd),
 					),
 				).rejects.toThrow(/binary file: sample\.bin/i);
 			},

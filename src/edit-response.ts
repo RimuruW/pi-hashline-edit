@@ -149,9 +149,7 @@ function buildAnchorsBlock(
 	anchorRange: { start: number; end: number } | null,
 ): string {
 	if (!anchorRange) {
-		return resultLines.length === 0
-			? "File is empty. Use edit with prepend or append and omit pos to insert content."
-			: ANCHORS_OMITTED_TEXT;
+		return ANCHORS_OMITTED_TEXT;
 	}
 	const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
 	const formatted = formatHashlineRegion(region, anchorRange.start);

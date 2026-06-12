@@ -1177,15 +1177,13 @@ export function computeAffectedLineRange(params: {
 		return null;
 	}
 
-	// Empty file after edit: no meaningful anchor block.
-	if (resultLineCount === 0) {
-		return null;
-	}
-
 	const start = Math.max(1, firstChangedLine - contextLines);
 	const end = Math.min(resultLineCount, lastChangedLine + contextLines);
 
-	// Guard against inverted range (can happen when context pushes end below start).
+	// Degenerate range: an empty result document (resultLineCount 0) clamps
+	// end below start. Unreachable from the edit tool (E_WOULD_EMPTY rejects
+	// emptying writes upstream), but this is a pure exported helper, so it
+	// keeps a sane null contract for that input rather than {start:1, end:0}.
 	if (end < start) {
 		return null;
 	}

@@ -37,13 +37,18 @@ describe("writeFileAtomically permissions", () => {
 		lstatMock.mockResolvedValue({ isSymbolicLink: () => false });
 	});
 
+	// White-box on purpose: the threat is a tmp-file pre-creation / symlink race
+	// in the same directory. "wx" (O_CREAT|O_EXCL) and the 0o600 create mode are
+	// the defenses, and neither is observable from outside without losing the
+	// race deterministically — so this suite asserts the fs calls themselves.
+	// fs-write.test.ts covers the observable end state on a real filesystem.
 	it("creates the temporary file securely, writes content, then restores the target mode", async () => {
 		const { writeFileAtomically } = await import("../../src/fs-write");
 
 		await writeFileAtomically("/tmp/secret.txt", "secret\n");
 
 		expect(openMock).toHaveBeenCalledWith(
-			expect.stringMatching(/\/tmp\/.tmp-/),
+			expect.stringMatching(/\/tmp\/\.tmp-/),
 			"wx",
 			0o600,
 		);

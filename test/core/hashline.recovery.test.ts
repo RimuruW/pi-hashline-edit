@@ -76,7 +76,7 @@ describe("applyHashlineEdits — error handling", () => {
 					op: "replace",
 					pos: { line: 1, hash: "ZZ" },
 					lines: ["bbb"],
-				} as any,
+				},
 			]),
 		).toThrow(/>>> 1#[A-Z]{2}:aaa/);
 	});

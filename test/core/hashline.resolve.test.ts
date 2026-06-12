@@ -174,7 +174,10 @@ describe("resolveEditAnchors", () => {
 	});
 
 	it("rejects missing op", () => {
-		const edits: HashlineToolEdit[] = [{ pos: "1#ZZ", lines: ["x"] } as any];
+		const edits: HashlineToolEdit[] = [
+			// Deliberately protocol-violating input: op is required by the type.
+			{ pos: "1#ZZ", lines: ["x"] } as unknown as HashlineToolEdit,
+		];
 		expect(() => resolveEditAnchors(edits)).toThrow(/requires an "op" string/i);
 	});
 });
