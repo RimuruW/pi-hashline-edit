@@ -30,7 +30,6 @@ export type EditMetrics = {
 	edits_attempted: number;
 	edits_noop: number;
 	warnings: number;
-	return_mode: "changed";
 	classification: EditClassification;
 	changed_lines?: { first: number; last: number };
 	added_lines?: number;
@@ -116,7 +115,6 @@ function buildMetrics(args: {
 		edits_attempted: args.editsAttempted,
 		edits_noop: args.noopEditsCount,
 		warnings: args.warningsCount,
-		return_mode: "changed",
 		classification: args.classification,
 	};
 	if (
@@ -137,6 +135,30 @@ function buildMetrics(args: {
 
 function warningsBlockOf(warnings: string[] | undefined): string {
 	return warnings?.length ? `\n\nWarnings:\n${warnings.join("\n")}` : "";
+}
+
+const ANCHORS_OMITTED_TEXT = "Anchors omitted; use read for subsequent edits.";
+
+/**
+ * Model-facing anchor block for the changed region: fresh LINE#HASH lines the
+ * model can chain into nearby follow-up edits without a re-read. Falls back to
+ * a re-read hint when the region is unbounded or exceeds the text budget.
+ */
+function buildAnchorsBlock(
+	resultLines: string[],
+	anchorRange: { start: number; end: number } | null,
+): string {
+	if (!anchorRange) {
+		return resultLines.length === 0
+			? "File is empty. Use edit with prepend or append and omit pos to insert content."
+			: ANCHORS_OMITTED_TEXT;
+	}
+	const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
+	const formatted = formatHashlineRegion(region, anchorRange.start);
+	const block = `--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
+	return Buffer.byteLength(block, "utf8") <= CHANGED_ANCHOR_TEXT_BUDGET_BYTES
+		? block
+		: ANCHORS_OMITTED_TEXT;
 }
 
 export function buildNoopResponse(input: NoopResponseInput): ToolResult {
@@ -190,22 +212,7 @@ export function buildChangedResponse(input: SuccessResponseInput): ToolResult {
 		lastChangedLine: editMeta.lastChangedLine,
 		resultLineCount: resultLines.length,
 	});
-	const anchorsBlock = anchorRange
-		? (() => {
-				const region = resultLines.slice(
-					anchorRange.start - 1,
-					anchorRange.end,
-				);
-				const formatted = formatHashlineRegion(region, anchorRange.start);
-				const block = `--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
-				return Buffer.byteLength(block, "utf8") <=
-					CHANGED_ANCHOR_TEXT_BUDGET_BYTES
-					? block
-					: "Anchors omitted; use read for subsequent edits.";
-			})()
-		: resultLines.length === 0
-			? "File is empty. Use edit with prepend or append and omit pos to insert content."
-			: "Anchors omitted; use read for subsequent edits.";
+	const anchorsBlock = buildAnchorsBlock(resultLines, anchorRange);
 
 	const text = [anchorsBlock, warningsBlock.trimStart()]
 		.filter((section) => section.length > 0)

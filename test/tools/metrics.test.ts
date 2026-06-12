@@ -60,7 +60,6 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
         edits_attempted: 1,
         edits_noop: 0,
         warnings: 0,
-        return_mode: "changed",
         classification: "applied",
         changed_lines: { first: 2, last: 2 },
       });
@@ -94,7 +93,6 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
       expect(result.details?.metrics).toMatchObject({
         edits_attempted: 1,
         edits_noop: 1,
-        return_mode: "changed",
         classification: "noop",
       });
       expect(result.details?.metrics?.changed_lines).toBeUndefined();
@@ -117,7 +115,6 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
 
       expect(result.details?.metrics).toMatchObject({
         edits_attempted: 1,
-        return_mode: "changed",
         classification: "applied",
       });
       expect(result.details?.metrics?.legacy_replace).toBeUndefined();

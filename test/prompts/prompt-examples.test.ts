@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
-import { assertEditRequest, type EditRequestParams } from "../../src/edit";
+import { assertEditRequest } from "../../src/edit";
 import { normalizeEditRequest } from "../../src/edit-normalize";
 import { resolveEditAnchors } from "../../src/hashline";
 
@@ -46,9 +46,7 @@ describe("prompt examples", () => {
 			const request: unknown = JSON.parse(block);
 			const normalized = normalizeEditRequest(request);
 			assertEditRequest(normalized);
-			const params = normalized as EditRequestParams;
-			expect(Array.isArray(params.edits)).toBe(true);
-			expect(() => resolveEditAnchors(params.edits!)).not.toThrow();
+			expect(() => resolveEditAnchors(normalized.edits)).not.toThrow();
 		}
 	});
 

@@ -248,7 +248,8 @@ function formatMismatchError(
 /**
  * Reject hashline display prefixes in edit payloads. Strict semantics: the
  * model must send literal file content for `lines`, not the rendered read /
- * diff form. Silent stripping is no longer performed — see AGENTS.md.
+ * diff form. Silent stripping is no longer performed — see CONTEXT.md
+ * (Architecture invariants).
  *
  * This covers the unambiguous full `LINE#HASH:` / diff `+/-` forms, rejectable
  * on shape alone. The bare `HH:` variant (issue #24) is context-dependent and
@@ -738,15 +739,8 @@ function resolveEditToSpan(
 			};
 		}
 		case "append": {
-			if (edit.lines.length === 0) {
-				noopEdits.push({
-					editIndex: index,
-					loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "EOF",
-					currentContent: edit.pos ? (fileLines[edit.pos.line - 1] ?? "") : "",
-				});
-				return null;
-			}
-
+			// Empty `lines` cannot reach here: validateAnchorEdits throws E_BAD_OP
+			// for empty append/prepend payloads before spans are resolved.
 			const insertedText = edit.lines.join("\n");
 			if (content.length === 0) {
 				return {
@@ -796,15 +790,6 @@ function resolveEditToSpan(
 			};
 		}
 		case "prepend": {
-			if (edit.lines.length === 0) {
-				noopEdits.push({
-					editIndex: index,
-					loc: edit.pos ? `${edit.pos.line}#${edit.pos.hash}` : "BOF",
-					currentContent: edit.pos ? (fileLines[edit.pos.line - 1] ?? "") : "",
-				});
-				return null;
-			}
-
 			const insertedText = edit.lines.join("\n");
 			const start = edit.pos ? lineStarts[edit.pos.line - 1]! : 0;
 			return {

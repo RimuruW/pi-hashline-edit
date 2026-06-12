@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - The parallel fuzzy legacy text-replace path (`src/edit-compat.ts`) and the "edit compatibility mode" UI notifier (`src/compatibility-notify.ts`), both superseded by the normalization layer.
+- **Breaking:** the `returnMode`/`returnRanges` request fields and the `details.fullContent`/`details.returnedRanges`/`details.structureOutline` payloads. `edit` now has one success shape: changed-region anchors in model-visible text plus host-only diff/metrics details; call `read` for broader context (ADR 0002).
+- The constant `return_mode` field from host-only `details.metrics`; it always read `"changed"` after the payload-mode deletion and carried no information.
 
 ### Tests
 
