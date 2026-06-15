@@ -293,6 +293,22 @@ type EditToolDefinition = ToolDefinition<
 	EditRenderState
 > & { renderShell?: "default" | "self" };
 
+function reuseTextComponent(lastComponent: unknown): Text {
+	return lastComponent instanceof Text ? lastComponent : new Text("", 0, 0);
+}
+
+function renderTextResult(
+	lastComponent: unknown,
+	textContent: string | undefined,
+): Text {
+	if (!textContent) {
+		return new Text("", 0, 0);
+	}
+	const text = reuseTextComponent(lastComponent);
+	text.setText(textContent);
+	return text;
+}
+
 const editToolDefinition: EditToolDefinition = {
 	name: "edit",
 	label: "Edit",
@@ -389,15 +405,10 @@ const editToolDefinition: EditToolDefinition = {
 		}
 
 		if (context.isError) {
-			if (!renderedText) {
-				return new Text("", 0, 0);
-			}
-			const text =
-				context.lastComponent instanceof Text
-					? context.lastComponent
-					: new Text("", 0, 0);
-			text.setText(`\n${theme.fg("error", renderedText)}`);
-			return text;
+			return renderTextResult(
+				context.lastComponent,
+				renderedText ? `\n${theme.fg("error", renderedText)}` : undefined,
+			);
 		}
 
 		if (isAppliedChangedResult(typedResult.details)) {
@@ -407,15 +418,7 @@ const editToolDefinition: EditToolDefinition = {
 				previewBeforeResult,
 				theme,
 			);
-			if (!appliedChangedText) {
-				return new Text("", 0, 0);
-			}
-			const text =
-				context.lastComponent instanceof Text
-					? context.lastComponent
-					: new Text("", 0, 0);
-			text.setText(appliedChangedText);
-			return text;
+			return renderTextResult(context.lastComponent, appliedChangedText);
 		}
 
 		if (!renderedText) {
