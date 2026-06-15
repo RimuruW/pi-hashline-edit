@@ -13,9 +13,9 @@
  *
  * This runs as the tool's `prepareArguments` hook, which Pi executes before AJV
  * schema validation and before `execute()`. The output is plain enumerable data
- * (an `edits` array), so Pi's `structuredClone` of prepareArguments output keeps
- * every field — unlike the retired non-enumerable-property hack (commit
- * 73e48ad) that silently lost fields through structuredClone.
+ * (an `edits` array); compatibility state must never be attached as hidden
+ * object metadata because Pi may `structuredClone` prepared arguments and drop
+ * non-enumerable properties.
  *
  * Scope guard: this layer only rewrites *field shape* (aliases, native field
  * names, missing `op`). It never touches hashline diff semantics — anchors,

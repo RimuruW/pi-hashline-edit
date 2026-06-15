@@ -22,10 +22,11 @@ describe("stale-position compound edits", () => {
 		// Two edits provided in bottom-up order (as the model would send them):
 		// 1. Replace line 5 ("line5") with new content
 		// 2. Prepend 3 lines at BOF
+		const line5Tag = makeTag(5, "line5");
 		const toolEdits: HashlineToolEdit[] = [
 			{
 				op: "replace",
-				pos: "5#JR", // hash computed below
+				pos: `${line5Tag.line}#${line5Tag.hash}`,
 				lines: ["NEW_LINE_5"],
 			},
 			{
@@ -33,10 +34,6 @@ describe("stale-position compound edits", () => {
 				lines: ["header-1", "header-2", "header-3"],
 			},
 		];
-
-		// Fix up the hash using the real computeLineHash function
-		const line5Hash = computeLineHash(5, "line5");
-		toolEdits[0].pos = `5#${line5Hash}`;
 
 		// Resolve through the tool-schema → HashlineEdit pipeline
 		const resolved: HashlineEdit[] = resolveEditAnchors(toolEdits);
