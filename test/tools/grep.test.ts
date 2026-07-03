@@ -398,8 +398,11 @@ describe("runRg spawn failure", () => {
 		closeCode?: number | null;
 		stderr?: string;
 	}) {
-		const stdout = new EventEmitter();
-		const stderr = new EventEmitter();
+		// Use EventEmitter with a setEncoding stub so runRg's
+		// child.stdout.setEncoding("utf-8") call does not throw.
+		const makeStream = () => Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+		const stdout = makeStream();
+		const stderr = makeStream();
 		const child = new EventEmitter() as ReturnType<typeof spawn>;
 		Object.assign(child, { stdout, stderr, kill: vi.fn() });
 
