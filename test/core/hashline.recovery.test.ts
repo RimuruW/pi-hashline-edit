@@ -8,8 +8,9 @@ import {
 	type HashlineToolEdit,
 } from "../../src/hashline";
 
-function makeTag(lineNum: number, text: string): Anchor {
-	return { line: lineNum, hash: computeLineHash(lineNum, text) };
+function makeTag(fileContent: string, lineNum: number): Anchor {
+	const fileLines = fileContent.split("\n");
+	return { line: lineNum, hash: computeLineHash(fileLines, lineNum - 1) };
 }
 
 describe("applyHashlineEdits — error handling", () => {
@@ -36,8 +37,8 @@ describe("applyHashlineEdits — error handling", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(3, "ccc"),
-				end: makeTag(1, "aaa"),
+				pos: makeTag(content, 3),
+				end: makeTag(content, 1),
 				lines: ["x"],
 			},
 		];
@@ -83,7 +84,7 @@ describe("applyHashlineEdits — error handling", () => {
 
 	it("retains still-valid range endpoints in retry snippets", () => {
 		const content = "aaa\nbbb\nccc\nddd\neee";
-		const validEnd = makeTag(5, "eee");
+		const validEnd = makeTag(content, 5);
 
 		try {
 			applyHashlineEdits(content, [
@@ -113,13 +114,13 @@ describe("applyHashlineEdits — error handling", () => {
 			applyHashlineEdits(content, [
 				{
 					op: "replace",
-					pos: makeTag(2, "bbb"),
-					end: makeTag(3, "ccc"),
+					pos: makeTag(content, 2),
+					end: makeTag(content, 3),
 					lines: ["X"],
 				},
 				{
 					op: "replace",
-					pos: makeTag(3, "ccc"),
+					pos: makeTag(content, 3),
 					lines: ["Y"],
 				},
 			]),
@@ -130,8 +131,8 @@ describe("applyHashlineEdits — error handling", () => {
 		const content = "aaa\nbbb\nccc";
 		expect(() =>
 			applyHashlineEdits(content, [
-				{ op: "append", pos: makeTag(2, "bbb"), lines: ["X"] },
-				{ op: "prepend", pos: makeTag(3, "ccc"), lines: ["Y"] },
+				{ op: "append", pos: makeTag(content, 2), lines: ["X"] },
+				{ op: "prepend", pos: makeTag(content, 3), lines: ["Y"] },
 			]),
 		).toThrow(/conflicting edits.*same insertion boundary/i);
 	});
@@ -142,11 +143,11 @@ describe("applyHashlineEdits — error handling", () => {
 			applyHashlineEdits(content, [
 				{
 					op: "replace",
-					pos: makeTag(2, "bbb"),
-					end: makeTag(3, "ccc"),
+					pos: makeTag(content, 2),
+					end: makeTag(content, 3),
 					lines: ["X"],
 				},
-				{ op: "append", pos: makeTag(2, "bbb"), lines: ["Y"] },
+				{ op: "append", pos: makeTag(content, 2), lines: ["Y"] },
 			]),
 		).toThrow(/conflicting edits.*inserts inside a replaced original range/i);
 	});
@@ -156,7 +157,7 @@ describe("applyHashlineEdits — error handling", () => {
 		expect(() =>
 			applyHashlineEdits(content, [
 				{ op: "append", lines: ["X"] },
-				{ op: "append", pos: makeTag(2, "b"), lines: ["Y"] },
+				{ op: "append", pos: makeTag(content, 2), lines: ["Y"] },
 			]),
 		).toThrow(/conflicting edits.*same insertion boundary/i);
 	});
@@ -166,7 +167,7 @@ describe("applyHashlineEdits — error handling", () => {
 		expect(() =>
 			applyHashlineEdits(content, [
 				{ op: "append", lines: ["X"] },
-				{ op: "append", pos: makeTag(3, ""), lines: ["Y"] },
+				{ op: "append", pos: makeTag(content, 3), lines: ["Y"] },
 			]),
 		).toThrow(/conflicting edits.*same insertion boundary/i);
 	});
@@ -178,8 +179,8 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(1, "if (ok) {"),
-				end: makeTag(2, "  run();"),
+				pos: makeTag(content, 1),
+				end: makeTag(content, 2),
 				lines: ["if (ok) {", "  runSafe();", "}"],
 			},
 		];
@@ -193,8 +194,8 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(2, "if (ok) {"),
-				end: makeTag(3, "  run();"),
+				pos: makeTag(content, 2),
+				end: makeTag(content, 3),
 				lines: ["before();", "if (ok) {", "  runSafe();"],
 			},
 		];
@@ -206,7 +207,7 @@ describe("applyHashlineEdits — heuristics", () => {
 			"before();\nbefore();\nif (ok) {\n  runSafe();\n}\nafter();",
 		);
 		expect(result.warnings).toEqual([
-			"Potential boundary duplication before replace 2#YP-3#TP: the replacement starts with a line that matches the preceding surviving line after trim.",
+			"Potential boundary duplication before replace 2#BS-3#HM: the replacement starts with a line that matches the preceding surviving line after trim.",
 		]);
 	});
 
@@ -219,7 +220,7 @@ describe("applyHashlineEdits — heuristics", () => {
 			const edits: HashlineEdit[] = [
 				{
 					op: "replace",
-					pos: makeTag(3, "\t\tvalue"),
+					pos: makeTag(content, 3),
 					lines: ["\\t\\treplaced"],
 				},
 			];
@@ -229,7 +230,7 @@ describe("applyHashlineEdits — heuristics", () => {
 			expect(result.warnings).toBeUndefined();
 			expect(edits[0]).toEqual({
 				op: "replace",
-				pos: makeTag(3, "\t\tvalue"),
+				pos: makeTag(content, 3),
 				lines: ["\\t\\treplaced"],
 			});
 		} finally {
@@ -246,7 +247,7 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(2, "bbb"),
+				pos: makeTag(content, 2),
 				lines: ["\\uDDDD"],
 			},
 		];
@@ -261,7 +262,7 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(2, "bbb"),
+				pos: makeTag(content, 2),
 				lines: ["x1", "x2", "x3"],
 			},
 		];
@@ -279,7 +280,7 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(2, "bbb"),
+				pos: makeTag(content, 2),
 				lines: ["BBB"],
 			},
 		];
@@ -294,8 +295,8 @@ describe("applyHashlineEdits — heuristics", () => {
 		const edits: HashlineEdit[] = [
 			{
 				op: "replace",
-				pos: makeTag(2, "bbb"),
-				end: makeTag(3, "ccc"),
+				pos: makeTag(content, 2),
+				end: makeTag(content, 3),
 				lines: ["x1", "x2", "x3"],
 			},
 		];
@@ -312,7 +313,7 @@ describe("applyHashlineEdits — heuristics", () => {
 describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	it("full pipeline: tool-schema edit → resolve → apply", () => {
 		const content = "aaa\nbbb\nccc";
-		const tag2 = `2#${computeLineHash(2, "bbb")}`;
+		const tag2 = `2#${computeLineHash(content.split("\n"), 1)}`;
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: tag2, lines: ["BBB"] },
 		];
@@ -322,7 +323,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	});
 
 	it("full pipeline: string lines are rejected", () => {
-		const tag2 = `2#${computeLineHash(2, "bbb")}`;
+		const tag2 = `2#${computeLineHash(["aaa", "bbb", "ccc"], 1)}`;
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: tag2, lines: "BBB" } as unknown as HashlineToolEdit,
 		];
@@ -332,7 +333,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	});
 
 	it("full pipeline: null lines are rejected instead of deleting", () => {
-		const tag2 = `2#${computeLineHash(2, "bbb")}`;
+		const tag2 = `2#${computeLineHash(["aaa", "bbb", "ccc"], 1)}`;
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: tag2, lines: null } as unknown as HashlineToolEdit,
 		];
@@ -360,8 +361,8 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	});
 
 	it("full pipeline: hashline-prefixed array lines are rejected (no autocorrection)", () => {
-		const tag2 = `2#${computeLineHash(2, "bbb")}`;
-		const hash = computeLineHash(2, "BBB");
+		const tag2 = `2#${computeLineHash(["aaa", "bbb", "ccc"], 1)}`;
+		const hash = computeLineHash(["aaa", "BBB", "ccc"], 1);
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: tag2, lines: [`2#${hash}:BBB`] },
 		];
@@ -371,7 +372,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	it("full pipeline: copied full-line anchor tolerates fuzzy same-line Unicode differences", () => {
 		const content = "he said “hi”\nkeep";
 		const asciiLine = 'he said "hi"';
-		const staleWithHint = `1#${computeLineHash(1, asciiLine)}:${asciiLine}`;
+		const staleWithHint = `1#${computeLineHash([asciiLine, "keep"], 0)}:${asciiLine}`;
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: staleWithHint, lines: ["HELLO"] },
 		];
@@ -384,7 +385,7 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	it("full pipeline: copied full-line anchor rejects fuzzy textHint when hash is arbitrary", () => {
 		const line = 'he said "hi"';
 		const content = `${line}\nkeep`;
-		const actualHash = computeLineHash(1, line);
+		const actualHash = computeLineHash(content.split("\n"), 0);
 		const arbitraryHash = actualHash === "ZZ" ? "PP" : "ZZ";
 		const staleWithHint = `1#${arbitraryHash}:${line}`;
 		const toolEdits: HashlineToolEdit[] = [
@@ -396,13 +397,14 @@ describe("integration: resolveEditAnchors → applyHashlineEdits", () => {
 	});
 
 	it("full pipeline: copied diff-preview hunks are rejected (no autocorrection)", () => {
-		const start = `1#${computeLineHash(1, "aaa")}`;
-		const end = `3#${computeLineHash(3, "ccc")}`;
+		const fileLines = ["aaa", "bbb", "ccc"];
+		const start = `1#${computeLineHash(fileLines, 0)}`;
+		const end = `3#${computeLineHash(fileLines, 2)}`;
 		const replacement = [
-			` 1#${computeLineHash(1, "aaa")}:aaa`,
+			` 1#${computeLineHash(fileLines, 0)}:aaa`,
 			"-2    bbb",
-			`+2#${computeLineHash(2, "BBB")}:BBB`,
-			` 3#${computeLineHash(3, "ccc")}:ccc`,
+			`+2#${computeLineHash(["aaa", "BBB", "ccc"], 1)}:BBB`,
+			` 3#${computeLineHash(fileLines, 2)}:ccc`,
 		];
 		const toolEdits: HashlineToolEdit[] = [
 			{ op: "replace", pos: start, end, lines: replacement },

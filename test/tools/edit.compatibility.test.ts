@@ -288,7 +288,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
 			const editTool = getTool("edit");
-			const betaRef = `2#${computeLineHash(2, "bbb")}`;
+			const betaRef = `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}`;
 
 			// edits present → top-level fields are not folded; they surface as unknown
 			// root keys and are rejected.

@@ -25,7 +25,7 @@ describe("computeEditPreview", () => {
 		await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
 			vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "aaa\nbbb\nccc\n" });
 
-			const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
+			const betaRef = `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}:bbb`;
 			const preview = await computeEditPreview(
 				{
 					path: "sample.txt",
@@ -89,7 +89,7 @@ describe("computeEditPreview", () => {
 			vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "aaa\nbbb\nccc\n" });
 
 			await chmod(path, 0o444);
-			const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
+			const betaRef = `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}:bbb`;
 
 			try {
 				const preview = await computeEditPreview(
@@ -115,7 +115,7 @@ describe("computeEditPreview", () => {
 		await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
 			vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "aaa\nbbb\nccc\n" });
 
-			const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
+			const betaRef = `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}:bbb`;
 			const preview = await computeEditPreview(
 				{
 					path: "sample.txt",
@@ -143,7 +143,7 @@ describe("computeEditPreview", () => {
 				return { kind: "text", text: "aaa\nbbb\nccc\n" };
 			});
 
-			const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
+			const betaRef = `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}:bbb`;
 			const editArgs = {
 				path: "sample.txt",
 				edits: [{ op: "replace", pos: betaRef, lines: ["BBB"] }],

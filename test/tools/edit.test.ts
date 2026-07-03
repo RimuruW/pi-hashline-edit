@@ -218,7 +218,7 @@ describe("registerEditTool", () => {
 						edits: [
 							{
 								op: "replace",
-								pos: `1#${computeLineHash(1, "aaa")}`,
+								pos: `1#${computeLineHash("aaa\nbbb\n".split("\n"), 0)}`,
 								lines: ["AAA"],
 							},
 						],
@@ -247,7 +247,7 @@ describe("registerEditTool", () => {
 						edits: [
 							{
 								op: "replace",
-								pos: `1#${computeLineHash(1, "aaa")}:aaa`,
+								pos: `1#${computeLineHash("aaa\nbbb\n".split("\n"), 0)}:aaa`,
 								lines: null,
 							},
 						],
@@ -288,7 +288,7 @@ describe("registerEditTool", () => {
 				edits: [
 					{
 						op: "replace",
-						pos: `2#${computeLineHash(2, "bbb")}:bbb`,
+						pos: `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}:bbb`,
 						lines: ["BBB"],
 					},
 				],
@@ -323,7 +323,7 @@ describe("registerEditTool", () => {
 			expect(rendered).not.toContain("Changes: +1 -1");
 			expect(rendered).not.toContain("Diff preview:");
 			expect(rendered).not.toContain("```diff");
-			expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
+			expect(rendered).toContain(`+2#${computeLineHash("aaa\nBBB\nccc\n".split("\n"), 1)}:BBB`);
 			expect(rendered).not.toContain("Updated sample.txt");
 			expect(rendered).not.toContain("```text");
 			expect(result.details?.diff).toContain("+2");

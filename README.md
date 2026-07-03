@@ -84,7 +84,11 @@ Hashes are computed with [xxhashjs](https://github.com/pierrec/js-xxhash) (xxHas
 
 The alphabet (`ZPMQVRWSNKTXJBYH`) excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O), so a reference like `5#MQ` can never be confused with code content, hex literals, or English words.
 
-Lines that contain no alphanumeric characters (e.g. a lone `}`) use their line number as the hash seed to reduce collisions on structurally identical markers.
+Each line's hash is computed from its content together with its immediate neighbors: the input to xxHash32 is `prev + "\0" + curr + "\0" + next`, where each component is the normalized (trailing whitespace stripped, `\r` removed) text of the preceding line, the current line, and the following line respectively. Lines at file boundaries use `""` for the missing neighbor.
+
+This means editing line N invalidates anchors for lines N−1, N, and N+1 — an intended safety property — while distant anchors remain stable. Two identical lines (e.g. `}`) that appear in different contexts receive different hashes, so no line-number tiebreaker is needed.
+
+When an anchor includes a `:content` hint (e.g. `5#MQ:some text`), the runtime cross-checks the hint against the actual file line. If the hash matches but the hint clearly differs from the actual line, the anchor is treated as stale — guarding the 1/256 collision case at zero extra token cost.
 
 ## Development
 

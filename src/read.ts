@@ -93,14 +93,12 @@ export function formatHashlineReadPreview(
 	const endIdx = limit
 		? Math.min(startLine - 1 + limit, totalLines)
 		: totalLines;
-	const selected = allLines.slice(startLine - 1, endIdx);
-
 	// Raw mode skips LINE#HASH prefixes. The selection, truncation, and
 	// continuation notices are identical to hashline mode — single code path
 	// so the two modes cannot drift on edge cases.
 	const formatted = options.raw
-		? selected.join("\n")
-		: formatHashlineRegion(selected, startLine);
+		? allLines.slice(startLine - 1, endIdx).join("\n")
+		: formatHashlineRegion(allLines, startLine, endIdx);
 
 	const truncation = truncateHead(formatted);
 	if (!options.raw && truncation.firstLineExceedsLimit) {

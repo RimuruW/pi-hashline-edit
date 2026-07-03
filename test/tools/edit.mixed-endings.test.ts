@@ -6,7 +6,9 @@ import { getText, makeFakePiRegistry, makeToolContext, withTempFile } from "../s
 describe("edit tool — mixed line-ending warning", () => {
 	it("includes a warning when the file has mixed CRLF and LF line endings", async () => {
 		// File has CRLF on line 1 and bare LF on line 2 — clearly mixed.
+		// After LF normalization the file reads as ["alpha", "beta", "gamma"].
 		const mixedContent = "alpha\r\nbeta\ngamma\r\n";
+		const normalizedLines = ["alpha", "beta", "gamma"];
 		await withTempFile("mixed.txt", mixedContent, async ({ cwd }) => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
@@ -19,7 +21,7 @@ describe("edit tool — mixed line-ending warning", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(normalizedLines, 1)}`,
 							lines: ["BETA"],
 						},
 					],
@@ -36,6 +38,7 @@ describe("edit tool — mixed line-ending warning", () => {
 
 	it("does not include a mixed-endings warning for a pure-CRLF file", async () => {
 		const crlfContent = "alpha\r\nbeta\r\ngamma\r\n";
+		const normalizedLines = ["alpha", "beta", "gamma"];
 		await withTempFile("crlf.txt", crlfContent, async ({ cwd }) => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
@@ -48,7 +51,7 @@ describe("edit tool — mixed line-ending warning", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(normalizedLines, 1)}`,
 							lines: ["BETA"],
 						},
 					],

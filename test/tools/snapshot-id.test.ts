@@ -41,7 +41,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 						edits: [
 							{
 								op: "replace",
-								pos: `2#${computeLineHash(2, "beta")}`,
+								pos: `2#${computeLineHash(["alpha", "beta", ""], 1)}`,
 								lines: ["BETA"],
 							},
 						],
@@ -79,7 +79,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 						edits: [
 							{
 								op: "replace",
-								pos: `4#${computeLineHash(4, "four")}`,
+								pos: `4#${computeLineHash(["one", "TWO!", "three", "four", "five", ""], 3)}`,
 								lines: ["FOUR"],
 							},
 						],
@@ -110,7 +110,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["alpha", "beta", ""], 1)}`,
 							lines: ["BETA"],
 						},
 					],
@@ -147,7 +147,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 							edits: [
 								{
 									op: "replace",
-									pos: `2#${computeLineHash(2, "two")}`,
+									pos: `2#${computeLineHash(["one", "two", "three", ""], 1)}`,
 									lines: ["TWO"],
 								},
 							],
@@ -162,7 +162,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 
 				expect(errorMessage).toMatch(/^\[E_STALE_ANCHOR\]/);
 				expect(errorMessage).toContain(
-					`>>> 2#${computeLineHash(2, "TWO!")}:TWO!`,
+					`>>> 2#${computeLineHash(["one", "TWO!", "three", ""], 1)}:TWO!`,
 				);
 			},
 		);

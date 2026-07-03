@@ -204,7 +204,10 @@ describe("chained edit anchors", () => {
 	});
 
 	it("unchanged line anchors from original read remain valid after chained edits", async () => {
-		await withTempFile("stale.ts", "alpha\nbeta\n", async ({ cwd }) => {
+		// Use a 3-line file where alpha (line 1) and beta (line 3) are not adjacent.
+		// Context hashing means changing a line also invalidates adjacent lines' hashes,
+		// so we ensure the "unchanged" anchor (alphaRef) is not a neighbour of the changed line.
+		await withTempFile("stale.ts", "alpha\nmiddle\nbeta\n", async ({ cwd }) => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
 			const ctx = makeToolContext(cwd);
@@ -222,7 +225,7 @@ describe("chained edit anchors", () => {
 				.find((line: string) => line.includes(":alpha"))!
 				.split(":")[0]!;
 
-			// First edit changes beta.
+			// First edit changes beta (line 3). alpha (line 1) is not adjacent, so its hash is stable.
 			await editTool.execute(
 				"e1",
 				{ path: "stale.ts", edits: [{ op: "replace", pos: betaRef, lines: ["BETA"] }] },
@@ -231,7 +234,7 @@ describe("chained edit anchors", () => {
 				ctx,
 			);
 
-			// The stale betaRef should now fail (line 2 hash changed).
+			// The stale betaRef should now fail (line 3 hash changed).
 			await expect(
 				editTool.execute(
 					"e2-stale",
@@ -242,7 +245,7 @@ describe("chained edit anchors", () => {
 				),
 			).rejects.toThrow(/stale anchor/);
 
-			// But alphaRef (unchanged line) should still work.
+			// But alphaRef (unchanged, non-adjacent line) should still work.
 			const alphaEdit = await editTool.execute(
 				"e3",
 				{ path: "stale.ts", edits: [{ op: "replace", pos: alphaRef, lines: ["ALPHA"] }] },

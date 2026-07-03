@@ -81,13 +81,32 @@ function xxh32(input: string, seed = 0): number {
 	return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
 }
 
-export function computeLineHash(idx: number, line: string): string {
-	line = line.replace(/\r/g, "").trimEnd();
-	let seed = 0;
-	if (!RE_SIGNIFICANT.test(line)) {
-		seed = idx;
-	}
-	return DICT[xxh32(line, seed) & 0xff];
+/** Normalize a line for hash input: strip \r, trimEnd. */
+function normalizeHashInput(line: string): string {
+	return line.replace(/\r/g, "").trimEnd();
+}
+
+/**
+ * Compute a 2-char hash from a line's content and its immediate neighbors.
+ * Using prev + "\0" + curr + "\0" + next as the hash input ensures:
+ * - Distant edits no longer invalidate anchors (only same/adjacent lines affected).
+ * - Adjacent-edit invalidation is intentional: editing near an anchor makes it stale.
+ * - Silent 8-bit collisions now require the entire 3-line window to match.
+ * All three inputs must already be normalized via normalizeHashInput.
+ */
+export function computeHashFromContext(prev: string, curr: string, next: string): string {
+	return DICT[xxh32(prev + "\0" + curr + "\0" + next) & 0xff];
+}
+
+/**
+ * Compute the 2-char hash for a line at a given 0-based index within a file.
+ * Neighbors outside the file boundaries use "" as their normalized value.
+ */
+export function computeLineHash(fileLines: readonly string[], index: number): string {
+	const prev = normalizeHashInput(index > 0 ? fileLines[index - 1]! : "");
+	const curr = normalizeHashInput(fileLines[index]!);
+	const next = normalizeHashInput(index < fileLines.length - 1 ? fileLines[index + 1]! : "");
+	return computeHashFromContext(prev, curr, next);
 }
 
 /** Fuzzy-match Unicode replacement regexes for anchor textHint validation. */
@@ -233,7 +252,7 @@ function formatMismatchError(
 		if (prev !== -1 && num > prev + 1) out.push("    ...");
 		prev = num;
 		const content = fileLines[num - 1];
-		const hash = computeLineHash(num, content);
+		const hash = computeLineHash(fileLines, num - 1);
 		const prefix = `${String(num).padStart(lineNumberWidth, " ")}#${hash}`;
 		out.push(
 			retryLineSet.has(num)
@@ -508,7 +527,7 @@ function warnBareHashPrefixLines(
 	if (suspects.length === 0) return;
 
 	const fileHashSet = new Set(
-		fileLines.map((line, i) => computeLineHash(i + 1, line)),
+		fileLines.map((_line, i) => computeLineHash(fileLines, i)),
 	);
 	const matchCount = suspects.filter(({ hash }) =>
 		fileHashSet.has(hash),
@@ -899,14 +918,25 @@ function validateAnchorEdits(
 			);
 		}
 		const line = lineIndex.fileLines[ref.line - 1]!;
-		const actual = computeLineHash(ref.line, line);
-		if (actual === ref.hash) return true;
+		const actual = computeLineHash(lineIndex.fileLines, ref.line - 1);
+		if (actual === ref.hash) {
+			// QUESTIONING: hash matches but textHint says otherwise → treat as stale (anti-collision guard).
+			// Guards the 1/256 collision case: a model that copied "LINE#HASH:content" gets the content
+			// cross-checked for free. If the hint clearly differs from the actual line, the anchor is stale.
+			if (ref.textHint !== undefined && !isFuzzyEquivalentLine(ref.textHint, line)) {
+				mismatches.push({ line: ref.line, expected: ref.hash, actual });
+				retryLines.add(ref.line);
+				return false;
+			}
+			return true;
+		}
 		if (ref.textHint !== undefined) {
-			const hintedHash = computeLineHash(ref.line, ref.textHint);
-			if (
-				hintedHash === ref.hash &&
-				isFuzzyEquivalentLine(ref.textHint, line)
-			) {
+			// FORGIVENESS: hash mismatched, but recompute using the hint's content in the current file's
+			// neighbor context. If that matches ref.hash and the hint fuzzy-matches the actual line, accept.
+			const prevLine = normalizeHashInput(ref.line > 1 ? lineIndex.fileLines[ref.line - 2]! : "");
+			const nextLine = normalizeHashInput(ref.line < lineIndex.fileLines.length ? lineIndex.fileLines[ref.line]! : "");
+			const hintedHash = computeHashFromContext(prevLine, normalizeHashInput(ref.textHint), nextLine);
+			if (hintedHash === ref.hash && isFuzzyEquivalentLine(ref.textHint, line)) {
 				const key = `${ref.line}:${ref.hash}:${ref.textHint}`;
 				if (!acceptedFuzzyRefs.has(key)) {
 					acceptedFuzzyRefs.add(key);
@@ -1198,22 +1228,19 @@ export function computeAffectedLineRange(params: {
 }
 
 export function formatHashlineRegion(
-	lines: string[],
+	fileLines: readonly string[],
 	startLine: number,
+	endLine: number,
 ): string {
-	const lineNumberWidth = String(
-		startLine + Math.max(0, lines.length - 1),
-	).length;
-	return lines
-		.map((line, index) => {
-			const lineNumber = startLine + index;
-			const paddedLineNumber = String(lineNumber).padStart(
-				lineNumberWidth,
-				" ",
-			);
-			return `${paddedLineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
-		})
-		.join("\n");
+	const lineNumberWidth = String(endLine).length;
+	const out: string[] = [];
+	for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+		const line = fileLines[lineNum - 1]!;
+		const hash = computeLineHash(fileLines, lineNum - 1);
+		const paddedLineNumber = String(lineNum).padStart(lineNumberWidth, " ");
+		out.push(`${paddedLineNumber}#${hash}:${line}`);
+	}
+	return out.join("\n");
 }
 
 // ─── Changed line range computation ─────────────────────────────────

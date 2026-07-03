@@ -17,7 +17,7 @@ describe("edit tool text shape (token budget)", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "bbb")}`,
+							pos: `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}`,
 							lines: ["BBB"],
 						},
 					],
@@ -55,7 +55,7 @@ describe("edit tool text shape (token budget)", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "bbb")}`,
+							pos: `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}`,
 							lines: ["BBB"],
 						},
 					],
@@ -86,7 +86,7 @@ describe("edit tool text shape (token budget)", () => {
 						edits: [
 							{
 								op: "replace",
-								pos: `1#${computeLineHash(1, "only")}`,
+								pos: `1#${computeLineHash(["only", ""], 0)}`,
 								lines: [],
 							},
 						],
@@ -112,7 +112,7 @@ describe("edit tool text shape (token budget)", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, longLine)}`,
+							pos: `2#${computeLineHash(["before", longLine, "after", ""], 1)}`,
 							lines: [`b${longLine.slice(1)}`],
 						},
 					],

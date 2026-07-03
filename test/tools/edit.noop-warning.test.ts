@@ -18,7 +18,7 @@ describe("edit tool noop + warnings", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "bbb")}`,
+							pos: `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}`,
 							lines: ["bbb"],
 						},
 					],
@@ -48,7 +48,7 @@ describe("edit tool noop + warnings", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `1#${computeLineHash(1, asciiLine)}:${asciiLine}`,
+							pos: `1#${computeLineHash([asciiLine, "keep"], 0)}:${asciiLine}`,
 							lines: ["he said “hi”"],
 						},
 					],
@@ -79,7 +79,7 @@ describe("edit tool noop + warnings", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "bbb")}`,
+							pos: `2#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 1)}`,
 							lines: ["BBB", "ccc"],
 						},
 					],

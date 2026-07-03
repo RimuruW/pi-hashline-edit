@@ -48,7 +48,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `1#${computeLineHash(1, "alpha")}`,
+							pos: `1#${computeLineHash(["alpha", "beta", "gamma", ""], 0)}`,
 							lines: ["ALPHA"],
 						},
 					],
@@ -64,7 +64,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["ALPHA", "beta", "gamma", ""], 1)}`,
 							lines: ["BETA"],
 						},
 					],
@@ -98,7 +98,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `1#${computeLineHash(1, "alpha")}`,
+							pos: `1#${computeLineHash(["alpha", "beta", "gamma", ""], 0)}`,
 							lines: ["ALPHA"],
 						},
 					],
@@ -114,7 +114,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["ALPHA", "beta", "gamma", ""], 1)}`,
 							lines: ["BETA"],
 						},
 					],
@@ -148,7 +148,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `1#${computeLineHash(1, "alpha")}`,
+							pos: `1#${computeLineHash(["alpha", "beta", "gamma", ""], 0)}`,
 							lines: ["ALPHA"],
 						},
 					],
@@ -164,7 +164,7 @@ describe("edit tool file mutation queue", () => {
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["ALPHA", "beta", "gamma", ""], 1)}`,
 							lines: ["BETA"],
 						},
 					],

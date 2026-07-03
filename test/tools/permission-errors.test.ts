@@ -71,7 +71,7 @@ describe.skipIf(isRoot || isWindows)("permission errors", () => {
 							edits: [
 								{
 									op: "replace",
-									pos: `1#${computeLineHash(1, "original content")}`,
+									pos: `1#${computeLineHash(["original content", ""], 0)}`,
 									lines: ["new content"],
 								},
 							],

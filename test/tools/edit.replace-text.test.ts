@@ -34,7 +34,7 @@ describe("edit tool replace_text op", () => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
 			const editTool = getTool("edit");
-			const cRef = `3#${computeLineHash(3, "ccc")}`;
+			const cRef = `3#${computeLineHash("aaa\nbbb\nccc\n".split("\n"), 2)}`;
 
 			const result = await editTool.execute(
 				"e1",

@@ -42,7 +42,7 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash("alpha\nbeta\ngamma\n".split("\n"), 1)}`,
 							lines: ["BETA"],
 						},
 					],
@@ -76,7 +76,7 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["alpha", "beta", ""], 1)}`,
 							lines: ["beta"],
 						},
 					],
@@ -130,7 +130,7 @@ describe("details.metrics surface (Phase 2 C — host-only observability)", () =
 					edits: [
 						{
 							op: "replace",
-							pos: `2#${computeLineHash(2, "beta")}`,
+							pos: `2#${computeLineHash(["alpha", "beta", ""], 1)}`,
 							lines: ["beta"],
 						},
 					],

@@ -21,7 +21,7 @@ export function restoreLineEndings(
 	return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
 
-// Returns true when content mixes line-ending styles — at least one CRLF and
+// Returns true when content mixes line-ending styles \u2014 at least one CRLF and
 // at least one bare LF (a \n not preceded by \r), or a lone \r combined with
 // any other style. A file uniform in any one style returns false.
 export function hasMixedLineEndings(content: string): boolean {
@@ -49,12 +49,17 @@ function formatDiffPreviewLine(
 	lineNumWidth: number,
 	line: string,
 	includeHash: boolean,
+	allNewLines?: readonly string[],
+	newLineIndex?: number,
 ): string {
 	const paddedLineNum = String(lineNum).padStart(lineNumWidth, " ");
 	if (!includeHash) {
 		return `${prefix}${paddedLineNum}    ${line}`;
 	}
-	return `${prefix}${paddedLineNum}#${computeLineHash(lineNum, line)}:${line}`;
+	const hash = allNewLines !== undefined && newLineIndex !== undefined
+		? computeLineHash(allNewLines, newLineIndex)
+		: computeLineHash([line], 0);  // fallback: single-element array
+	return `${prefix}${paddedLineNum}#${hash}:${line}`;
 }
 
 export function generateDiffString(
@@ -63,6 +68,7 @@ export function generateDiffString(
 	contextLines = 4,
 ): { diff: string } {
 	const parts = Diff.diffLines(oldContent, newContent);
+	const newLines = newContent.split("\n");
 	const output: string[] = [];
 	const maxLineNum = Math.max(
 		oldContent.split("\n").length,
@@ -82,7 +88,7 @@ export function generateDiffString(
 			for (const line of raw) {
 				if (part.added) {
 					output.push(
-						formatDiffPreviewLine("+", newLineNum, lineNumWidth, line, true),
+						formatDiffPreviewLine("+", newLineNum, lineNumWidth, line, true, newLines, newLineNum - 1),
 					);
 					newLineNum++;
 				} else {
@@ -119,7 +125,7 @@ export function generateDiffString(
 			}
 			for (const line of linesToShow) {
 				output.push(
-					formatDiffPreviewLine(" ", newLineNum, lineNumWidth, line, true),
+					formatDiffPreviewLine(" ", newLineNum, lineNumWidth, line, true, newLines, newLineNum - 1),
 				);
 				oldLineNum++;
 				newLineNum++;
