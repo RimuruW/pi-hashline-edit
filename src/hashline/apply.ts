@@ -23,6 +23,7 @@ interface HashMismatch {
 	line: number;
 	expected: string;
 	actual: string;
+	textHint?: string;
 }
 
 interface NoopEdit {
@@ -32,6 +33,11 @@ interface NoopEdit {
 }
 
 // ─── Mismatch formatting ────────────────────────────────────────────────
+
+// Max total candidates across all anchors before we stop listing per-anchor candidates.
+const CANDIDATE_TOTAL_LIMIT = 8;
+// Max candidates per individual stale anchor.
+const CANDIDATE_PER_ANCHOR_LIMIT = 3;
 
 function formatMismatchError(
 	mismatches: HashMismatch[],
@@ -81,6 +87,80 @@ function formatMismatchError(
 				? `>>> ${prefix}:${content}`
 				: `    ${prefix}:${content}`,
 		);
+	}
+
+	// Scan for fuzzy-match candidates for stale anchors that carry a textHint.
+	// Runs only on the error path after all mismatches are collected (O(n×mismatches), acceptable).
+	const hintedMismatches = mismatches.filter((m) => m.textHint !== undefined);
+	if (hintedMismatches.length > 0) {
+		// Per-anchor candidate lists: 1-based line numbers outside the display window.
+		type AnchorCandidates =
+			| { kind: "list"; lines: number[] }
+			| { kind: "overflow"; count: number };
+
+		const perAnchor: { mismatch: HashMismatch; result: AnchorCandidates }[] =
+			[];
+		let totalCandidates = 0;
+
+		for (const m of hintedMismatches) {
+			const hint = m.textHint!;
+			const matches: number[] = [];
+			for (let i = 0; i < fileLines.length; i++) {
+				const oneBasedLine = i + 1;
+				// Skip lines already shown in the display window.
+				if (displayLines.has(oneBasedLine)) continue;
+				if (isFuzzyEquivalentLine(hint, fileLines[i]!)) {
+					matches.push(oneBasedLine);
+				}
+			}
+
+			if (totalCandidates + matches.length > CANDIDATE_TOTAL_LIMIT) {
+				// Total budget exhausted: show overflow message for this anchor.
+				perAnchor.push({
+					mismatch: m,
+					result: { kind: "overflow", count: matches.length },
+				});
+			} else if (matches.length > CANDIDATE_PER_ANCHOR_LIMIT) {
+				// Per-anchor limit exceeded before total: show overflow message.
+				totalCandidates += matches.length;
+				perAnchor.push({
+					mismatch: m,
+					result: { kind: "overflow", count: matches.length },
+				});
+			} else {
+				totalCandidates += matches.length;
+				perAnchor.push({
+					mismatch: m,
+					result: { kind: "list", lines: matches },
+				});
+			}
+		}
+
+		// Only emit the "Did you mean" section when at least one anchor has candidates.
+		const hasAnyCandidates = perAnchor.some(
+			({ result }) =>
+				result.kind === "overflow" ||
+				(result.kind === "list" && result.lines.length > 0),
+		);
+		if (hasAnyCandidates) {
+			out.push("");
+			out.push(
+				"Did you mean (content-matched candidates for stale anchors):",
+			);
+			for (const { mismatch, result } of perAnchor) {
+				if (result.kind === "overflow") {
+					out.push(
+						`  ${result.count} similar lines found for ${mismatch.line}#${mismatch.expected} — re-read to disambiguate`,
+					);
+				} else {
+					for (const lineNum of result.lines) {
+						const freshHash = computeLineHash(fileLines, lineNum - 1);
+						const lineContent = fileLines[lineNum - 1]!;
+						out.push(`  ${lineNum}#${freshHash}:${lineContent}   ← for stale ${mismatch.line}#${mismatch.expected}`);
+					}
+				}
+			}
+		}
 	}
 
 	return out.join("\n");
@@ -235,22 +315,23 @@ function computeInsertionBoundary(
 	edit: Extract<HashlineEdit, { op: "append" | "prepend" }>,
 	lineIndex: LineIndex,
 ): number {
-	switch (edit.op) {
-		case "append": {
-			const fileLineCount = lineIndex.fileLines.length;
-			const eofBoundary =
-				lineIndex.hasTerminalNewline && fileLineCount > 0
-					? fileLineCount - 1
-					: fileLineCount;
-			return edit.pos
-				? lineIndex.hasTerminalNewline && edit.pos.line === fileLineCount
-					? eofBoundary
-					: edit.pos.line
-				: eofBoundary;
-		}
-		case "prepend":
-			return edit.pos ? edit.pos.line - 1 : 0;
+	if (edit.op === "prepend") {
+		return edit.pos ? edit.pos.line - 1 : 0;
 	}
+
+	// append
+	const fileLineCount = lineIndex.fileLines.length;
+	const eofBoundary =
+		lineIndex.hasTerminalNewline && fileLineCount > 0
+			? fileLineCount - 1
+			: fileLineCount;
+	if (!edit.pos) {
+		return eofBoundary;
+	}
+	if (lineIndex.hasTerminalNewline && edit.pos.line === fileLineCount) {
+		return eofBoundary;
+	}
+	return edit.pos.line;
 }
 
 function findExactUniqueTextMatch(
@@ -502,6 +583,76 @@ function assertNoConflictingSpans(spans: ResolvedEditSpan[]): void {
 }
 
 /**
+ * Warn when an append or prepend payload exactly matches the lines already
+ * adjacent at the insertion point — indicates a duplicate insert after a
+ * previous successful call. Never blocks the edit (non-fatal warning).
+ */
+function warnDuplicateInsert(
+	op: "append" | "prepend",
+	edit: Extract<HashlineEdit, { op: "append" | "prepend" }>,
+	lineIndex: LineIndex,
+	warnings: string[],
+): void {
+	const { fileLines, hasTerminalNewline } = lineIndex;
+	const insertLines = edit.lines;
+	const n = insertLines.length;
+	if (n === 0) return;
+
+	// Exclude the trailing sentinel element produced by split("\n") on a
+	// newline-terminated file so adjacency comparisons use visible lines only.
+	const visibleLineCount = hasTerminalNewline
+		? fileLines.length - 1
+		: fileLines.length;
+
+	// Determine the slice of existing file lines to compare against.
+	let compareStart: number; // 0-based index into fileLines, inclusive
+	let compareEnd: number;   // 0-based index into fileLines, exclusive
+
+	if (op === "append") {
+		if (edit.pos) {
+			// After pos.line: compare fileLines[pos.line .. pos.line + n - 1].
+			compareStart = edit.pos.line;
+			compareEnd = compareStart + n;
+		} else {
+			// EOF append: compare the last n visible lines (sentinel excluded).
+			compareStart = visibleLineCount - n;
+			compareEnd = visibleLineCount;
+		}
+	} else {
+		// prepend
+		if (edit.pos) {
+			// Before pos.line: compare fileLines[pos.line - 1 - n .. pos.line - 2].
+			compareEnd = edit.pos.line - 1;
+			compareStart = compareEnd - n;
+		} else {
+			// BOF prepend: compare first n lines.
+			compareStart = 0;
+			compareEnd = n;
+		}
+	}
+
+	// Out-of-bounds relative to visible lines: cannot determine adjacency, skip.
+	// Using visibleLineCount as the ceiling prevents comparing against the sentinel.
+	if (compareStart < 0 || compareEnd > visibleLineCount) return;
+
+	const adjacentLines = fileLines.slice(compareStart, compareEnd);
+	if (adjacentLines.length !== n) return;
+
+	// All lines must match after trim; at least one must be significant.
+	const allMatch = insertLines.every(
+		(line, i) => line.trim() === adjacentLines[i]!.trim(),
+	);
+	if (!allMatch) return;
+
+	const hasSignificant = insertLines.some((line) => RE_SIGNIFICANT.test(line));
+	if (!hasSignificant) return;
+
+	warnings.push(
+		`Potential duplicate insert at ${describeEdit(edit)}: the inserted lines are identical to the lines already adjacent to the insertion point. If a previous edit call already applied this insert, do not resend it.`,
+	);
+}
+
+/**
  * Validate anchor hashes against the current file content.
  *
  * Checks every anchor in every edit for hash match (or fuzzy match when
@@ -532,7 +683,7 @@ function validateAnchorEdits(
 			// Guards the 1/256 collision case: a model that copied "LINE#HASH:content" gets the content
 			// cross-checked for free. If the hint clearly differs from the actual line, the anchor is stale.
 			if (ref.textHint !== undefined && !isFuzzyEquivalentLine(ref.textHint, line)) {
-				mismatches.push({ line: ref.line, expected: ref.hash, actual });
+				mismatches.push({ line: ref.line, expected: ref.hash, actual, textHint: ref.textHint });
 				retryLines.add(ref.line);
 				return false;
 			}
@@ -555,7 +706,7 @@ function validateAnchorEdits(
 				return true;
 			}
 		}
-		mismatches.push({ line: ref.line, expected: ref.hash, actual });
+		mismatches.push({ line: ref.line, expected: ref.hash, actual, textHint: ref.textHint });
 		retryLines.add(ref.line);
 		return false;
 	}
@@ -621,6 +772,9 @@ function validateAnchorEdits(
 						"[E_BAD_OP] Append with empty lines payload. Provide content to insert or remove the edit.",
 					);
 				}
+				// Warn when the inserted lines are identical to the lines already adjacent
+				// at the insertion point — symptom of a duplicate insert after a prior success.
+				warnDuplicateInsert("append", edit, lineIndex, warnings);
 				break;
 			}
 			case "prepend": {
@@ -630,6 +784,8 @@ function validateAnchorEdits(
 						"[E_BAD_OP] Prepend with empty lines payload. Provide content to insert or remove the edit.",
 					);
 				}
+				// Same duplicate-insert guard for prepend.
+				warnDuplicateInsert("prepend", edit, lineIndex, warnings);
 				break;
 			}
 			case "replace_text":

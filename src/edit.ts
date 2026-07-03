@@ -20,13 +20,13 @@ import { normalizeEditRequest } from "./edit-normalize";
 import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
 import {
 	applyHashlineEdits,
+	computeChangedLineRange,
 	resolveEditAnchors,
 	type HashlineToolEdit,
 } from "./hashline";
 import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
-import { getFileSnapshot } from "./snapshot";
 import {
 	buildChangedResponse,
 	buildNoopResponse,
@@ -34,9 +34,12 @@ import {
 	type HashlineEditToolDetails,
 } from "./edit-response";
 import {
+	isDuplicateAppliedPayload,
 	recordAppliedEdit,
 	recordNoopEdit,
 } from "./noop-loop-guard";
+import { getReadSnapshot, getReadSnapshotVersions, rememberReadSnapshot } from "./read-snapshot";
+import { threeWayMerge } from "./merge";
 import {
 	buildAppliedChangedResultText,
 	createRenderedEditMarkdownTheme,
@@ -290,8 +293,109 @@ async function executeEditPipeline(
 	const originalNormalized = normalizeToLF(rawContent);
 
 	const resolved = resolveEditAnchors(toolEdits);
-	const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
 
+	const extraWarnings: string[] = [];
+
+	// Attempt to apply the edits directly. On E_STALE_ANCHOR, fall through to
+	// the multi-version snapshot recovery block below.
+	let directResult: ReturnType<typeof applyHashlineEdits> | null = null;
+	let primaryError: unknown = null;
+
+	try {
+		directResult = applyHashlineEdits(originalNormalized, resolved, signal);
+	} catch (err: unknown) {
+		primaryError = err;
+	}
+
+	if (primaryError !== null) {
+		// Only attempt snapshot recovery for stale-anchor errors.
+		const isStale =
+			primaryError instanceof Error &&
+			primaryError.message.startsWith("[E_STALE_ANCHOR]");
+
+		if (!isStale || !absolutePath) {
+			throw primaryError;
+		}
+
+		// absolutePath is the canonical mutation-target path when resolvedPath was
+		// provided (execute path); fall back gracefully when not (preview path).
+		const canonicalPath = absolutePath;
+
+		// Try each stored version (newest first), skipping any that matches the
+		// live content (those would give a trivially identical replay and cannot
+		// help). Track whether any version had valid anchors but a merge conflict,
+		// for a more informative error if all versions fail.
+		const versions = getReadSnapshotVersions(canonicalPath).filter(
+			(v) => v !== originalNormalized,
+		);
+
+		if (versions.length === 0) {
+			// No usable snapshot history: surface original error unchanged.
+			throw primaryError;
+		}
+
+		let anyAnchorValid = false;
+
+		for (const snapshot of versions) {
+			// Try replaying the edits against this historical snapshot.
+			let snapshotResult: ReturnType<typeof applyHashlineEdits>;
+			try {
+				snapshotResult = applyHashlineEdits(snapshot, resolved, signal);
+			} catch {
+				// Anchors not valid against this version — try older ones.
+				continue;
+			}
+
+			anyAnchorValid = true;
+
+			// 3-way merge: base=snapshot, base-edited=snapshotResult, current=live.
+			const merged = threeWayMerge(snapshot, snapshotResult.content, originalNormalized);
+			if (merged === null) {
+				// Merge conflict for this version — try older ones.
+				continue;
+			}
+
+			// Recompute changed-line range against the live file.
+			const mergedRange = computeChangedLineRange(originalNormalized, merged);
+
+			extraWarnings.push(
+				"Recovered stale anchors by replaying this edit against a recent read of this file and merging onto the current content (exact merge, no relocation). Review the diff to confirm the result.",
+			);
+
+			// Recovery succeeded: return the merged result.
+			return {
+				path,
+				originalNormalized,
+				result: merged,
+				bom,
+				originalEnding,
+				hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
+				warnings: [
+					...(mixedEndingWarning ? [mixedEndingWarning] : []),
+					...extraWarnings,
+					...(snapshotResult.warnings ?? []),
+				],
+				noopEdits: snapshotResult.noopEdits,
+				firstChangedLine: mergedRange?.firstChangedLine,
+				lastChangedLine: mergedRange?.lastChangedLine,
+			};
+		}
+
+		// All versions exhausted without a successful merge.
+		// Append a diagnostic suffix to the original error for easier triage.
+		let suffix: string;
+		if (anyAnchorValid) {
+			suffix =
+				"\n(Recovery attempted: your anchors match an older read of this file, but replaying that edit conflicts with changes made since. Re-read to get current anchors.)";
+		} else {
+			suffix =
+				"\n(Your anchors do not match any recent read of this file — they may be from a stale context or copied incorrectly. Re-read before editing.)";
+		}
+		throw new Error(`${(primaryError as Error).message}${suffix}`);
+	}
+
+	// Direct apply succeeded.
+	const anchorResult = directResult!;
 	return {
 		path,
 		originalNormalized,
@@ -301,6 +405,7 @@ async function executeEditPipeline(
 		hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
 		warnings: [
 			...(mixedEndingWarning ? [mixedEndingWarning] : []),
+			...extraWarnings,
 			...(anchorResult.warnings ?? []),
 		],
 		noopEdits: anchorResult.noopEdits,
@@ -499,6 +604,27 @@ const editToolDefinition: EditToolDefinition = {
 		return withFileMutationQueue(mutationTargetPath, async () => {
 			throwIfAborted(signal);
 
+			// Duplicate-edit guard: if the incoming payload is byte-identical to the
+			// last successfully applied payload for this path, and the file has not
+			// changed since that edit (read-snapshot still matches current content),
+			// reject before running the pipeline — the pipeline would otherwise throw
+			// E_STALE_ANCHOR before we could detect the duplicate.
+			const appliedPayloadKey = JSON.stringify(normalizedParams.edits);
+			if (isDuplicateAppliedPayload(mutationTargetPath, appliedPayloadKey)) {
+				const snapshot = getReadSnapshot(mutationTargetPath);
+				if (snapshot !== null) {
+					const currentFile = await loadFileKindAndText(mutationTargetPath);
+					if (currentFile.kind === "text") {
+						const currentNormalized = normalizeToLF(stripBom(currentFile.text).text);
+						if (snapshot === currentNormalized) {
+							throw new Error(
+								`[E_DUPLICATE_EDIT] This exact edit was already applied to ${path} by your previous edit call — the file already contains this change. Do NOT resend the same payload: that would duplicate the inserted lines. Re-read the file to see the current state before editing again.`,
+							);
+						}
+					}
+				}
+			}
+
 			const {
 				originalNormalized,
 				result,
@@ -517,8 +643,6 @@ const editToolDefinition: EditToolDefinition = {
 				mutationTargetPath,
 			);
 
-			const editsAttempted = normalizedParams.edits.length;
-
 			if (originalNormalized === result) {
 				const payloadKey = JSON.stringify(normalizedParams.edits);
 				const { count, escalate } = recordNoopEdit(mutationTargetPath, payloadKey);
@@ -527,17 +651,9 @@ const editToolDefinition: EditToolDefinition = {
 						`[E_NOOP_LOOP] Edit to ${path} was a byte-identical no-op ${count} times in a row. STOP re-sending this payload. Re-read the file — the content you are trying to write already exists, or your anchors point at the wrong lines.`,
 					);
 				}
-				const noopSnapshotId = (
-					await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
-				).snapshotId;
 				return buildNoopResponse({
 					path,
 					noopEdits,
-					snapshotId: noopSnapshotId,
-					editMeta: {
-						editsAttempted,
-						noopEditsCount: noopEdits?.length ?? 0,
-					},
 					warnings,
 				});
 			}
@@ -549,32 +665,29 @@ const editToolDefinition: EditToolDefinition = {
 			}
 
 			throwIfAborted(signal);
-			recordAppliedEdit(mutationTargetPath);
+			recordAppliedEdit(mutationTargetPath, appliedPayloadKey);
 			await writeFileAtomically(
 				mutationTargetPath,
 				bom + restoreLineEndings(result, originalEnding),
 				{ alreadyResolved: true },
 			);
-			const updatedSnapshotId = (
-				await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
-			).snapshotId;
+
+			// Update the snapshot slot with the post-edit content so chained edits
+			// using anchors from this edit's response can recover if a distant
+			// external change arrives between this edit and the next one.
+			rememberReadSnapshot(mutationTargetPath, result);
 
 			const editMeta: EditMeta = {
-				editsAttempted,
-				noopEditsCount: noopEdits?.length ?? 0,
 				firstChangedLine,
 				lastChangedLine,
 			};
 
-			const successInput = {
+			return buildChangedResponse({
 				originalNormalized,
 				result,
 				warnings,
-				snapshotId: updatedSnapshotId,
 				editMeta,
-			};
-
-			return buildChangedResponse(successInput);
+			});
 		});
 	},
 };

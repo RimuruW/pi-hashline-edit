@@ -61,7 +61,7 @@ describe("edit tool noop + warnings", () => {
 			expect(getText(result)).toContain("Classification: noop");
 			expect(getText(result)).toContain("Warnings:");
 			expect(getText(result)).toContain("Accepted fuzzy anchor validation");
-			expect(result.details?.metrics?.warnings).toBe(1);
+			expect(result.details?.warnings).toHaveLength(1);
 			expect(await readFile(path, "utf-8")).toBe("he said “hi”\nkeep\n");
 		});
 	});

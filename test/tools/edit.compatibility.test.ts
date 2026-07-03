@@ -365,7 +365,7 @@ describe("edit tool: native top-level oldText/newText", () => {
 			);
 
 			expect(getText(result)).not.toContain("rewrote the file as UTF-8");
-			expect(result.details?.metrics?.warnings).toBe(0);
+			expect(result.details?.warnings).toHaveLength(0);
 			expect(await readFile(path)).toEqual(originalBytes);
 		});
 	});

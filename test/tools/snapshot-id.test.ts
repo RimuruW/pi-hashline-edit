@@ -121,8 +121,8 @@ describe("snapshotId surface (details-only after W2)", () => {
 			);
 
 			expect(getText(result)).not.toContain("SnapshotId");
-			// details still expose the post-edit fingerprint for host UIs.
-			expect(result.details?.snapshotId).toEqual(expect.any(String));
+			// snapshotId is no longer surfaced in edit details (removed in cleanup).
+			expect(result.details?.snapshotId).toBeUndefined();
 		});
 	});
 

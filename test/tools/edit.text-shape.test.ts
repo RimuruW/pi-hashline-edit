@@ -35,10 +35,6 @@ describe("edit tool text shape (token budget)", () => {
 			expect(text).not.toContain("Updated anchors");
 			expect(result.details?.diff).toContain("+2");
 			expect(result.details?.diff).toContain(":BBB");
-			expect(result.details?.metrics).toMatchObject({
-				added_lines: 1,
-				removed_lines: 1,
-			});
 		});
 	});
 

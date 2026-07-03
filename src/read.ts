@@ -17,6 +17,9 @@ import { formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
+import { resolveMutationTargetPath } from "./fs-write";
+import { rememberReadSnapshot } from "./read-snapshot";
+import { clearAppliedPayload } from "./noop-loop-guard";
 
 const READ_DESC = readFileSync(
 	new URL("../prompts/read.md", import.meta.url),
@@ -217,6 +220,18 @@ export function registerReadTool(pi: ExtensionAPI): void {
 			});
 			const snapshot = await getFileSnapshot(absolutePath);
 
+			// Capture snapshot for stale-anchor recovery. Only hashline (non-raw)
+			// reads mint anchors, so raw reads must not update the slot — anchors
+			// from a raw read do not exist, so there is nothing to recover against.
+			if (!params.raw) {
+				const canonicalWritePath = await resolveMutationTargetPath(absolutePath);
+				rememberReadSnapshot(canonicalWritePath, normalized);
+				// A deliberate re-read after an edit clears the duplicate-edit guard
+				// for this path — the model has seen the current state and any
+				// subsequent identical payload is intentional, not a retry loop.
+				clearAppliedPayload(canonicalWritePath);
+			}
+
 			// Invalid UTF-8 bytes are decoded as U+FFFD, matching Pi's built-in
 			// tools. Warn only when the decoder reported invalid bytes; a literal,
 			// valid U+FFFD in a UTF-8 file should not be treated as lossy decoding.
@@ -235,14 +250,6 @@ export function registerReadTool(pi: ExtensionAPI): void {
 					...(preview.nextOffset !== undefined
 						? { nextOffset: preview.nextOffset }
 						: {}),
-					// Phase 2 C — host-only observability. Truncated reads usually mean
-					// a follow-up read with `offset = next_offset` is coming.
-					metrics: {
-						truncated: !!preview.truncation,
-						...(preview.nextOffset !== undefined
-							? { next_offset: preview.nextOffset }
-							: {}),
-					},
 				},
 			};
 		},
