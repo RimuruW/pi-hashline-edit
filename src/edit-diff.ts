@@ -21,6 +21,20 @@ export function restoreLineEndings(
 	return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
 }
 
+// Returns true when content mixes line-ending styles — at least one CRLF and
+// at least one bare LF (a \n not preceded by \r), or a lone \r combined with
+// any other style. A file uniform in any one style returns false.
+export function hasMixedLineEndings(content: string): boolean {
+	const hasCrlf = /\r\n/.test(content);
+	// Bare LF: a \n not immediately preceded by \r
+	const hasBareLf = /(?<!\r)\n/.test(content);
+	// Lone CR: a \r not followed by \n
+	const hasLoneCr = /\r(?!\n)/.test(content);
+
+	const styleCount = [hasCrlf, hasBareLf, hasLoneCr].filter(Boolean).length;
+	return styleCount > 1;
+}
+
 export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("\uFEFF")
 		? { bom: "\uFEFF", text: content.slice(1) }

@@ -1,5 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { detectLineEnding, normalizeToLF, stripBom } from "../../src/edit-diff";
+import { detectLineEnding, hasMixedLineEndings, normalizeToLF, stripBom } from "../../src/edit-diff";
+
+// ─── hasMixedLineEndings ────────────────────────────────────────────────
+
+describe("hasMixedLineEndings", () => {
+	it("returns false for pure LF content", () => {
+		expect(hasMixedLineEndings("alpha\nbeta\ngamma\n")).toBe(false);
+	});
+
+	it("returns false for pure CRLF content", () => {
+		expect(hasMixedLineEndings("alpha\r\nbeta\r\ngamma\r\n")).toBe(false);
+	});
+
+	it("returns true for CRLF + bare LF mix", () => {
+		expect(hasMixedLineEndings("alpha\r\nbeta\ngamma\r\n")).toBe(true);
+	});
+
+	it("does not double-count the \\n inside \\r\\n as a bare LF", () => {
+		// A file with only CRLF endings has no bare LF — the \n after \r is not bare.
+		expect(hasMixedLineEndings("a\r\nb\r\nc\r\n")).toBe(false);
+	});
+
+	it("returns true for lone \\r combined with LF", () => {
+		// Old Mac \r + bare LF = mixed
+		expect(hasMixedLineEndings("alpha\rbeta\ngamma")).toBe(true);
+	});
+
+	it("returns true for lone \\r combined with CRLF", () => {
+		expect(hasMixedLineEndings("alpha\r\nbeta\rgamma")).toBe(true);
+	});
+
+	it("returns false for content without any line endings", () => {
+		expect(hasMixedLineEndings("no line endings here")).toBe(false);
+	});
+
+	it("returns false for empty string", () => {
+		expect(hasMixedLineEndings("")).toBe(false);
+	});
+});
 
 // ─── detectLineEnding ───────────────────────────────────────────────────
 

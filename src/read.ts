@@ -66,7 +66,7 @@ function getPreviewLines(text: string): string[] {
 
 export function formatHashlineReadPreview(
 	text: string,
-	options: { offset?: number; limit?: number },
+	options: { offset?: number; limit?: number; raw?: boolean },
 ): { text: string; truncation?: TruncationResult; nextOffset?: number } {
 	const allLines = getPreviewLines(text);
 	const totalLines = allLines.length;
@@ -94,10 +94,16 @@ export function formatHashlineReadPreview(
 		? Math.min(startLine - 1 + limit, totalLines)
 		: totalLines;
 	const selected = allLines.slice(startLine - 1, endIdx);
-	const formatted = formatHashlineRegion(selected, startLine);
+
+	// Raw mode skips LINE#HASH prefixes. The selection, truncation, and
+	// continuation notices are identical to hashline mode — single code path
+	// so the two modes cannot drift on edge cases.
+	const formatted = options.raw
+		? selected.join("\n")
+		: formatHashlineRegion(selected, startLine);
 
 	const truncation = truncateHead(formatted);
-	if (truncation.firstLineExceedsLimit) {
+	if (!options.raw && truncation.firstLineExceedsLimit) {
 		return {
 			text: `[Line ${startLine} exceeds ${formatSize(truncation.maxBytes)}. Hashline output requires full lines; cannot compute hashes for a truncated preview.]`,
 			truncation,
@@ -147,6 +153,12 @@ export function registerReadTool(pi: ExtensionAPI): void {
 				Type.Integer({
 					minimum: 1,
 					description: "Maximum number of lines to read",
+				}),
+			),
+			raw: Type.Optional(
+				Type.Boolean({
+					description:
+						"Return plain text without LINE#HASH anchors. Saves tokens when you do not plan to edit this file.",
 				}),
 			),
 		}),
@@ -203,6 +215,7 @@ export function registerReadTool(pi: ExtensionAPI): void {
 			const preview = formatHashlineReadPreview(normalized, {
 				offset: params.offset,
 				limit: params.limit,
+				raw: params.raw,
 			});
 			const snapshot = await getFileSnapshot(absolutePath);
 

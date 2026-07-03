@@ -11,6 +11,7 @@ import { access as fsAccess } from "fs/promises";
 import {
 	detectLineEnding,
 	generateDiffString,
+	hasMixedLineEndings,
 	normalizeToLF,
 	restoreLineEndings,
 	stripBom,
@@ -32,6 +33,10 @@ import {
 	type EditMeta,
 	type HashlineEditToolDetails,
 } from "./edit-response";
+import {
+	recordAppliedEdit,
+	recordNoopEdit,
+} from "./noop-loop-guard";
 import {
 	buildAppliedChangedResultText,
 	createRenderedEditMarkdownTheme,
@@ -279,6 +284,9 @@ async function executeEditPipeline(
 	throwIfAborted(signal);
 	const { bom, text: rawContent } = stripBom(file.text);
 	const originalEnding = detectLineEnding(rawContent);
+	const mixedEndingWarning = hasMixedLineEndings(rawContent)
+		? `File had mixed line endings (CRLF and LF); this edit rewrote it uniformly as ${originalEnding === "\r\n" ? "CRLF" : "LF"}.`
+		: undefined;
 	const originalNormalized = normalizeToLF(rawContent);
 
 	const resolved = resolveEditAnchors(toolEdits);
@@ -291,7 +299,10 @@ async function executeEditPipeline(
 		bom,
 		originalEnding,
 		hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
-		warnings: [...(anchorResult.warnings ?? [])],
+		warnings: [
+			...(mixedEndingWarning ? [mixedEndingWarning] : []),
+			...(anchorResult.warnings ?? []),
+		],
 		noopEdits: anchorResult.noopEdits,
 		firstChangedLine: anchorResult.firstChangedLine,
 		lastChangedLine: anchorResult.lastChangedLine,
@@ -509,6 +520,13 @@ const editToolDefinition: EditToolDefinition = {
 			const editsAttempted = normalizedParams.edits.length;
 
 			if (originalNormalized === result) {
+				const payloadKey = JSON.stringify(normalizedParams.edits);
+				const { count, escalate } = recordNoopEdit(mutationTargetPath, payloadKey);
+				if (escalate) {
+					throw new Error(
+						`[E_NOOP_LOOP] Edit to ${path} was a byte-identical no-op ${count} times in a row. STOP re-sending this payload. Re-read the file — the content you are trying to write already exists, or your anchors point at the wrong lines.`,
+					);
+				}
 				const noopSnapshotId = (
 					await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
 				).snapshotId;
@@ -531,6 +549,7 @@ const editToolDefinition: EditToolDefinition = {
 			}
 
 			throwIfAborted(signal);
+			recordAppliedEdit(mutationTargetPath);
 			await writeFileAtomically(
 				mutationTargetPath,
 				bom + restoreLineEndings(result, originalEnding),

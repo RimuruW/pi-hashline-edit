@@ -11,6 +11,50 @@ vi.mock("../../src/file-kind", () => ({
 
 import * as fileKindMod from "../../src/file-kind";
 
+// ─── raw mode ───────────────────────────────────────────────────────────
+
+describe("formatHashlineReadPreview — raw mode", () => {
+	it("returns plain text without LINE#HASH prefixes when raw is true", () => {
+		const result = formatHashlineReadPreview("alpha\nbeta\ngamma", { raw: true });
+
+		expect(result.text).toContain("alpha");
+		expect(result.text).toContain("beta");
+		expect(result.text).toContain("gamma");
+		expect(result.text).not.toContain("#");
+		expect(result.text).not.toMatch(/\d+#/);
+	});
+
+	it("respects offset and limit in raw mode", () => {
+		const result = formatHashlineReadPreview("alpha\nbeta\ngamma\ndelta", {
+			offset: 2,
+			limit: 2,
+			raw: true,
+		});
+
+		expect(result.text).toContain("beta");
+		expect(result.text).toContain("gamma");
+		expect(result.text).not.toContain("alpha");
+		expect(result.text).not.toContain("delta");
+	});
+
+	it("includes continuation notice in raw mode when truncated by limit", () => {
+		const result = formatHashlineReadPreview("alpha\nbeta\ngamma", {
+			limit: 1,
+			raw: true,
+		});
+
+		expect(result.text).toContain("Use offset=2 to continue");
+		expect(result.text).not.toMatch(/\d+#/);
+	});
+
+	it("default (no raw) still returns hashline-formatted output", () => {
+		const result = formatHashlineReadPreview("alpha\nbeta", {});
+
+		expect(result.text).toMatch(/1#/);
+		expect(result.text).toContain(":alpha");
+	});
+});
+
 describe("formatHashlineReadPreview", () => {
 	it("refuses to emit a truncated hashline for an oversized first line", () => {
 		const longLine = "x".repeat(70_000);
