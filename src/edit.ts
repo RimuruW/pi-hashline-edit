@@ -4,7 +4,7 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { constants } from "fs";
 import { readFileSync } from "fs";
 import { access as fsAccess } from "fs/promises";
@@ -44,13 +44,13 @@ import {
 	type EditRenderState,
 } from "./edit-render";
 
-function stringEnumSchema<const Values extends readonly string[]>(
-	values: Values,
+function literalStringSchema<const Value extends string>(
+	value: Value,
 	options: { description: string },
 ) {
-	return Type.Unsafe<Values[number]>({
+	return Type.Unsafe<Value>({
 		type: "string",
-		enum: [...values],
+		enum: [value],
 		description: options.description,
 	});
 }
@@ -60,35 +60,76 @@ const hashlineEditLinesSchema = Type.Array(Type.String(), {
 		"replacement content, one array entry per line, no LINE#HASH prefix",
 });
 
-const hashlineEditItemSchema = Type.Object(
+const hashlineReplaceEditSchema = Type.Object(
 	{
-		op: stringEnumSchema(
-			["replace", "append", "prepend", "replace_text"] as const,
-			{
-				description:
-					'edit operation. "replace"/"append"/"prepend" use pos + lines; "replace_text" uses oldText + newText. Every edit must set op.',
-			},
-		),
-		pos: Type.Optional(
-			Type.String({ description: "start anchor (LINE#HASH from read)" }),
-		),
+		op: literalStringSchema("replace", {
+			description:
+				"replace one line at pos, or an inclusive pos..end range, with lines",
+		}),
+		pos: Type.String({ description: "start anchor (LINE#HASH from read)" }),
 		end: Type.Optional(
 			Type.String({
 				description:
-					"inclusive end anchor (LINE#HASH) of the range to replace; without end only the single line at pos is replaced",
+					"inclusive end anchor (LINE#HASH) of the range to replace; omit to replace only the line at pos",
 			}),
 		),
-		lines: Type.Optional(hashlineEditLinesSchema),
-		oldText: Type.Optional(
-			Type.String({
-				description: "with op replace_text: exact text to replace",
-			}),
-		),
-		newText: Type.Optional(
-			Type.String({ description: "with op replace_text: replacement text" }),
-		),
+		lines: hashlineEditLinesSchema,
 	},
 	{ additionalProperties: false },
+);
+
+const hashlineAppendEditSchema = Type.Object(
+	{
+		op: literalStringSchema("append", {
+			description: "insert lines after pos; omit pos to append at EOF",
+		}),
+		pos: Type.Optional(
+			Type.String({ description: "anchor (LINE#HASH from read) to insert after" }),
+		),
+		lines: hashlineEditLinesSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const hashlinePrependEditSchema = Type.Object(
+	{
+		op: literalStringSchema("prepend", {
+			description: "insert lines before pos; omit pos to prepend at BOF",
+		}),
+		pos: Type.Optional(
+			Type.String({
+				description: "anchor (LINE#HASH from read) to insert before",
+			}),
+		),
+		lines: hashlineEditLinesSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const hashlineReplaceTextEditSchema = Type.Object(
+	{
+		op: literalStringSchema("replace_text", {
+			description: "replace an exact unique substring with newText",
+		}),
+		oldText: Type.String({
+			description: "exact text to replace; must be unique in the file",
+		}),
+		newText: Type.String({ description: "replacement text" }),
+	},
+	{ additionalProperties: false },
+);
+
+const hashlineEditItemSchema = Type.Union(
+	[
+		hashlineReplaceEditSchema,
+		hashlineAppendEditSchema,
+		hashlinePrependEditSchema,
+		hashlineReplaceTextEditSchema,
+	],
+	{
+		description:
+			'discriminated edit item. "replace" uses pos/end/lines; "append" and "prepend" use optional pos + lines; "replace_text" uses oldText/newText.',
+	},
 );
 
 export const hashlineEditToolSchema = Type.Object(
@@ -104,7 +145,6 @@ export const hashlineEditToolSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-
 export type EditRequestParams = {
 	path: string;
 	edits: HashlineToolEdit[];
@@ -287,8 +327,15 @@ export async function computeEditPreview(
 	}
 }
 
+// TParams is intentionally TSchema, not typeof hashlineEditToolSchema. The
+// published `parameters` schema stays strict (discriminated anyOf) for the
+// model, but the internal prepareArguments/execute surface treats params as
+// unknown and defers per-item validation to resolveEditAnchors during
+// execute. Typing it as Static<typeof hashlineEditToolSchema> would claim
+// per-item conformance that prepareArguments does not actually enforce
+// (assertEditRequest only validates the envelope).
 type EditToolDefinition = ToolDefinition<
-	typeof hashlineEditToolSchema,
+	TSchema,
 	HashlineEditToolDetails,
 	EditRenderState
 > & { renderShell?: "default" | "self" };

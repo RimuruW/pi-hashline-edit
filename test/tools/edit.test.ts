@@ -58,7 +58,7 @@ describe("assertEditRequest", () => {
 });
 
 describe("registerEditTool", () => {
-	it("publishes a schema that validates strict hashline payloads", () => {
+	it("publishes a schema that validates discriminated hashline payloads", () => {
 		const ajv = new Ajv({ allErrors: true });
 		const validate = ajv.compile<unknown>(hashlineEditToolSchema);
 
@@ -68,6 +68,65 @@ describe("registerEditTool", () => {
 				edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
 			}),
 		).toBe(true);
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [
+					{ op: "replace", pos: "1#ZZ", end: "2#PM", lines: ["x"] },
+				],
+			}),
+		).toBe(true);
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [{ op: "append", lines: ["x"] }],
+			}),
+		).toBe(true);
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [{ op: "prepend", pos: "1#ZZ", lines: ["x"] }],
+			}),
+		).toBe(true);
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [{ op: "replace_text", oldText: "before", newText: "after" }],
+			}),
+		).toBe(true);
+	});
+
+	it("publishes a schema that rejects fields from the wrong edit variant", () => {
+		const ajv = new Ajv({ allErrors: true });
+		const validate = ajv.compile<unknown>(hashlineEditToolSchema);
+
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [
+					{
+						op: "replace",
+						pos: "1#ZZ",
+						lines: ["x"],
+						oldText: "",
+						newText: "",
+					},
+				],
+			}),
+		).toBe(false);
+		expect(
+			validate({
+				path: "a.ts",
+				edits: [
+					{
+						op: "replace_text",
+						oldText: "before",
+						newText: "after",
+						pos: "1#ZZ",
+					},
+				],
+			}),
+		).toBe(false);
 	});
 
 	it("publishes a schema with no top-level native text-replace fields", () => {
@@ -93,9 +152,13 @@ describe("registerEditTool", () => {
 		expect(props.returnRanges).toBeUndefined();
 	});
 
-	it("publishes a top-level object schema for pi tool registration", () => {
+	it("publishes a top-level object schema with discriminated edit variants", () => {
 		expect(hashlineEditToolSchema.type).toBe("object");
 		expect("anyOf" in hashlineEditToolSchema).toBe(false);
+		const properties = hashlineEditToolSchema.properties as {
+			edits: { items: { anyOf?: unknown[] } };
+		};
+		expect(properties.edits.items.anyOf).toHaveLength(4);
 	});
 
 	it("registers the edit tool with a normalization prepareArguments hook", () => {
