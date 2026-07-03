@@ -32,6 +32,8 @@ describe("prompt examples", () => {
 			"edit-guidelines.md",
 			"edit-snippet.md",
 			"edit.md",
+			"grep-snippet.md",
+			"grep.md",
 			"read-guidelines.md",
 			"read-snippet.md",
 			"read.md",
@@ -67,7 +69,7 @@ describe("prompt examples", () => {
 	});
 
 	it("snippets are non-empty single lines", () => {
-		for (const name of ["read-snippet.md", "edit-snippet.md"]) {
+		for (const name of ["read-snippet.md", "edit-snippet.md", "grep-snippet.md"]) {
 			const snippet = readPrompt(name).trim();
 			expect(snippet.length, name).toBeGreaterThan(0);
 			expect(snippet, name).not.toContain("\n");
