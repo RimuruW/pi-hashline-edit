@@ -53,10 +53,12 @@ const DICT = Array.from({ length: 256 }, (_, i) => {
  * payloads. The runtime no longer strips them — the model must send literal
  * file content. Matching any of these triggers `[E_INVALID_PATCH]`.
  */
-const HASHLINE_PREFIX_RE =
-	/^\s*(?:>>>|>>)?\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
-const HASHLINE_PREFIX_PLUS_RE =
-	/^\+\s*(?:\d+\s*#\s*|#\s*)[ZPMQVRWSNKTXJBYH]{2}:/;
+const HASHLINE_PREFIX_RE = new RegExp(
+	`^\\s*(?:>>>|>>)?\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{2}:`,
+);
+const HASHLINE_PREFIX_PLUS_RE = new RegExp(
+	`^\\+\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{2}:`,
+);
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
 
 /**
@@ -70,7 +72,7 @@ const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
  * Disambiguation happens against the file's actual hash set in
  * `rejectOrWarnBareHashPrefixLines`.
  */
-const HASHLINE_BARE_PREFIX_RE = /^\s*([ZPMQVRWSNKTXJBYH]{2}):/;
+const HASHLINE_BARE_PREFIX_RE = new RegExp(`^\\s*([${NIBBLE_STR}]{2}):`);
 
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
@@ -271,12 +273,12 @@ function assertNoDisplayPrefixes(lines: string[]): void {
 }
 
 /**
- * Parse replacement text into lines.
+ * Validate and return replacement lines.
  *
- * String input is normalized to LF and drops exactly one trailing newline,
- * matching read-preview style content. Array input is preserved verbatim so
- * explicitly provided blank lines remain intact. Display prefixes are
- * rejected by `assertNoDisplayPrefixes`, never silently stripped.
+ * Array input is preserved verbatim so explicitly provided blank lines remain
+ * intact. Display prefixes (full `LINE#HASH:` and diff `+/-` forms) are
+ * rejected by `assertNoDisplayPrefixes` — the model must send literal file
+ * content, never rendered read or diff output.
  */
 function hashlineParseText(edit: string[] | undefined): string[] {
 	const lines = edit ?? [];

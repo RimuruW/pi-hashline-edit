@@ -43,9 +43,11 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "knip": "knip --production",
-    "check": "npm run typecheck && npm run knip && npm test"
+    "lint": "biome check .",
+    "check": "npm run typecheck && npm run lint && npm run knip && npm test"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@types/node": "^22.0.0",
     "@types/xxhashjs": "^0.2.4",

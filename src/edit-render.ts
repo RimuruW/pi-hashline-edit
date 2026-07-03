@@ -144,7 +144,7 @@ export function isAppliedChangedResult(
 }
 
 export function buildAppliedChangedResultText(
-	text: string | undefined,
+	_text: string | undefined,
 	details: HashlineEditToolDetails | undefined,
 	preview: EditPreview | undefined,
 	theme: FgTheme,

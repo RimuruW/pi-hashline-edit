@@ -53,7 +53,7 @@ describe("computeEditPreview", () => {
 				cwd,
 			);
 
-			expect(preview).toEqual({ error: "File not found: missing.txt" });
+			expect(preview).toEqual({ error: "File not found: missing.txt. Use the write tool to create new files." });
 			expect(vi.mocked(fileKindMod.loadFileKindAndText)).not.toHaveBeenCalled();
 		});
 	});

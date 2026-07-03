@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyHashlineEdits, computeAffectedLineRange, computeLineHash, type HashlineEdit } from "../../src/hashline";
+import { applyHashlineEdits, computeLineHash, type HashlineEdit } from "../../src/hashline";
 
 function makeTag(line: number, text: string) {
 	return { line, hash: computeLineHash(line, text) };

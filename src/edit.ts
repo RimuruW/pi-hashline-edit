@@ -174,10 +174,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasOwn(request: Record<string, unknown>, key: string): boolean {
-	return Object.hasOwn(request, key);
-}
-
 // Validates the canonical edit request envelope after normalizeEditRequest has
 // converged any model dialects. Per-edit structural validation is delegated to
 // resolveEditAnchors (src/hashline.ts), which is the single source of truth for
@@ -252,7 +248,7 @@ async function executeEditPipeline(
 	} catch (error: unknown) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === "ENOENT") {
-			throw new Error(`File not found: ${path}`);
+			throw new Error(`File not found: ${path}. Use the write tool to create new files.`);
 		}
 		if (code === "EACCES" || code === "EPERM") {
 			const accessLabel =

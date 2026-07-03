@@ -7,7 +7,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 	const original = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
 	return {
 		...original,
-		withFileMutationQueue: vi.fn(async (path: string, work: () => Promise<unknown>) => {
+		withFileMutationQueue: vi.fn(async (_path: string, work: () => Promise<unknown>) => {
 			return work();
 		}),
 	};
