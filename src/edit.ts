@@ -4,7 +4,7 @@ import type {
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { constants } from "fs";
 import { readFileSync } from "fs";
 import { access as fsAccess } from "fs/promises";
@@ -145,9 +145,6 @@ export const hashlineEditToolSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
-
-type HashlineEditToolParams = Static<typeof hashlineEditToolSchema>;
-
 export type EditRequestParams = {
 	path: string;
 	edits: HashlineToolEdit[];
@@ -330,8 +327,15 @@ export async function computeEditPreview(
 	}
 }
 
+// TParams is intentionally TSchema, not typeof hashlineEditToolSchema. The
+// published `parameters` schema stays strict (discriminated anyOf) for the
+// model, but the internal prepareArguments/execute surface treats params as
+// unknown and defers per-item validation to resolveEditAnchors during
+// execute. Typing it as Static<typeof hashlineEditToolSchema> would claim
+// per-item conformance that prepareArguments does not actually enforce
+// (assertEditRequest only validates the envelope).
 type EditToolDefinition = ToolDefinition<
-	typeof hashlineEditToolSchema,
+	TSchema,
 	HashlineEditToolDetails,
 	EditRenderState
 > & { renderShell?: "default" | "self" };
@@ -365,7 +369,7 @@ const editToolDefinition: EditToolDefinition = {
 	prepareArguments: (args: unknown) => {
 		const normalized = normalizeEditRequest(args);
 		assertEditRequest(normalized);
-		return normalized as HashlineEditToolParams;
+		return normalized;
 	},
 	// Force the default tool shell (Box with pending/success/error background) so
 	// we don't inherit renderShell: "self" from the built-in edit tool of the
