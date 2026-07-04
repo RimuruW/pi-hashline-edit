@@ -2,6 +2,7 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { spawn, spawnSync } from "child_process";
 import { EventEmitter } from "events";
+import { PassThrough } from "stream";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { registerGrepTool } from "../../src/grep";
 import { registerEditTool } from "../../src/edit";
@@ -396,27 +397,27 @@ describe("runRg spawn failure", () => {
 	function fakeChild(opts: {
 		errorEvent?: Error;
 		closeCode?: number | null;
+		stdout?: string;
 		stderr?: string;
 	}) {
-		// Use EventEmitter with a setEncoding stub so runRg's
-		// child.stdout.setEncoding("utf-8") call does not throw.
-		const makeStream = () => Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
-		const stdout = makeStream();
-		const stderr = makeStream();
+		const stdout = new PassThrough();
+		const stderr = new PassThrough();
 		const child = new EventEmitter() as ReturnType<typeof spawn>;
 		Object.assign(child, { stdout, stderr, kill: vi.fn() });
 
-		// Emit events in the next microtask so listeners have time to attach.
-		// Use explicit undefined check so closeCode: null is not coerced to 0
-		// by the ?? operator (null ?? 0 === 0, which is wrong here).
+		// Emit events after listeners have time to attach. Use explicit undefined
+		// check so closeCode: null is not coerced to 0 by the ?? operator.
 		const closeCode = opts.closeCode !== undefined ? opts.closeCode : 0;
-		Promise.resolve().then(() => {
+		setImmediate(() => {
 			if (opts.errorEvent) {
 				child.emit("error", opts.errorEvent);
-			} else {
-				if (opts.stderr) stderr.emit("data", opts.stderr);
-				child.emit("close", closeCode);
+				return;
 			}
+			if (opts.stdout) stdout.write(opts.stdout);
+			if (opts.stderr) stderr.write(opts.stderr);
+			stdout.end();
+			stderr.end();
+			setImmediate(() => child.emit("close", closeCode));
 		});
 
 		return child;
@@ -484,5 +485,69 @@ describe("runRg spawn failure", () => {
 				makeToolContext(process.cwd()),
 			),
 		).rejects.toThrow(/terminated unexpectedly/i);
+	});
+
+	function matchEvent(path: string, lineNumber: number): string {
+		return `${JSON.stringify({
+			type: "match",
+			data: { path: { text: path }, line_number: lineNumber },
+		})}\n`;
+	}
+
+	it("does not mark exact-limit grep output as truncated", async () => {
+		await withTempFile("stream.ts", "match 1\nmatch 2\n", async ({ cwd, path }) => {
+			const child = fakeChild({
+				closeCode: 0,
+				stdout: matchEvent(path, 1) + matchEvent(path, 2),
+			});
+			vi.mocked(spawn).mockImplementationOnce(
+				() => child as ReturnType<typeof spawn>,
+			);
+
+			const { pi, getTool } = makeFakePiRegistry();
+			registerGrepTool(pi);
+			const tool = getTool("grep");
+
+			const result = await tool.execute(
+				"g1",
+				{ pattern: "match", path, limit: 2 },
+				undefined,
+				undefined,
+				makeToolContext(cwd),
+			);
+
+			expect(result.details).toMatchObject({ matches: 2, truncated: false });
+			expect(getText(result)).not.toContain("truncated at 2");
+			expect(child.kill).not.toHaveBeenCalled();
+		});
+	});
+
+	it("kills ripgrep and resolves with truncated results only after seeing limit plus one matches", async () => {
+		await withTempFile("stream.ts", "match 1\nmatch 2\nmatch 3\n", async ({ cwd, path }) => {
+			const child = fakeChild({
+				closeCode: null,
+				stdout: matchEvent(path, 1) + matchEvent(path, 2) + matchEvent(path, 3),
+			});
+			vi.mocked(spawn).mockImplementationOnce(
+				() => child as ReturnType<typeof spawn>,
+			);
+
+			const { pi, getTool } = makeFakePiRegistry();
+			registerGrepTool(pi);
+			const tool = getTool("grep");
+
+			const result = await tool.execute(
+				"g1",
+				{ pattern: "match", path, limit: 2 },
+				undefined,
+				undefined,
+				makeToolContext(cwd),
+			);
+
+			expect(result.details).toMatchObject({ matches: 2, truncated: true });
+			expect(getText(result)).toContain("truncated at 2");
+			expect(getText(result)).not.toContain("match 3");
+			expect(child.kill).toHaveBeenCalledTimes(1);
+		});
 	});
 });

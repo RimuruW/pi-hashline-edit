@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { spawn, spawnSync } from "child_process";
+import { createInterface } from "readline";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { loadFileKindAndText } from "./file-kind";
 import { formatHashlineRegion } from "./hashline";
@@ -17,6 +18,7 @@ const GREP_PROMPT_SNIPPET = loadPrompt(
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const STDERR_MAX_BYTES = 64 * 1024;
 
 // Exported so tests can inspect or stub the binary name without vi.mock("child_process").
 export const RG_BIN = "rg";
@@ -70,15 +72,63 @@ function mergeRange(ranges: LineRange[], range: LineRange): void {
 	ranges.splice(0, ranges.length, ...remaining);
 }
 
+interface RgSearchResult {
+	matchesByFile: Map<string, number[]>;
+	matches: number;
+	truncated: boolean;
+}
+
+function addMatch(
+	matchesByFile: Map<string, number[]>,
+	filePath: string,
+	lineNum: number,
+): void {
+	if (!matchesByFile.has(filePath)) {
+		matchesByFile.set(filePath, []);
+	}
+	matchesByFile.get(filePath)!.push(lineNum);
+}
+
+function parseMatchLine(line: string): { filePath: string; lineNum: number } | null {
+	if (!line.trim()) return null;
+	let event: RgEvent;
+	try {
+		event = JSON.parse(line) as RgEvent;
+	} catch {
+		return null;
+	}
+	if (event.type !== "match") return null;
+
+	const matchEvent = event as RgMatchEvent;
+	return {
+		filePath: matchEvent.data.path.text,
+		lineNum: matchEvent.data.line_number,
+	};
+}
+
+function appendLimitedStderr(current: string, chunk: string): string {
+	const combined = current + chunk;
+	if (Buffer.byteLength(combined, "utf8") <= STDERR_MAX_BYTES) {
+		return combined;
+	}
+	return Buffer.from(combined, "utf8")
+		.subarray(0, STDERR_MAX_BYTES)
+		.toString("utf8");
+}
+
 /**
- * Run rg asynchronously, returning its stdout. Honors AbortSignal by killing
- * the child process. Throws on process-level failure (spawn error, ENOBUFS,
- * non-zero exit with status 2) so callers always see a real error instead of
- * a misleading "No matches found".
+ * Run rg asynchronously, returning at most `limit` match events. Honors
+ * AbortSignal by killing the child process. The limit is process-level: we only
+ * mark truncated after seeing match number limit + 1, then kill rg and resolve
+ * with the first `limit` matches.
  *
  * rg exit codes: 0 = matches found, 1 = no matches, 2 = error.
  */
-function runRg(args: string[], signal: AbortSignal | undefined): Promise<string> {
+function runRg(
+	args: string[],
+	limit: number,
+	signal: AbortSignal | undefined,
+): Promise<RgSearchResult> {
 	return new Promise((resolve, reject) => {
 		if (signal?.aborted) {
 			reject(new Error("Aborted"));
@@ -86,9 +136,41 @@ function runRg(args: string[], signal: AbortSignal | undefined): Promise<string>
 		}
 
 		const child = spawn(RG_BIN, args);
-
-		const stdoutChunks: string[] = [];
+		const rl = createInterface({ input: child.stdout });
+		const matchesByFile = new Map<string, number[]>();
+		let totalMatched = 0;
+		let truncated = false;
+		let stoppedByLimit = false;
+		let settled = false;
 		let stderr = "";
+
+		const cleanup = () => {
+			signal?.removeEventListener("abort", onAbort);
+		};
+
+		const settleResolve = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolve({ matchesByFile, matches: totalMatched, truncated });
+		};
+
+		const settleReject = (error: Error) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			rl.close();
+			reject(error);
+		};
+
+		const stopForLimit = () => {
+			if (stoppedByLimit) return;
+			truncated = true;
+			stoppedByLimit = true;
+			cleanup();
+			rl.close();
+			child.kill();
+		};
 
 		// setEncoding lets Node's stream decoder handle multi-byte UTF-8 sequences
 		// that span chunk boundaries correctly — spawn's options.encoding is an exec
@@ -96,43 +178,57 @@ function runRg(args: string[], signal: AbortSignal | undefined): Promise<string>
 		child.stdout.setEncoding("utf-8");
 		child.stderr.setEncoding("utf-8");
 
-		child.stdout.on("data", (chunk: string) => {
-			stdoutChunks.push(chunk);
+		rl.on("line", (line: string) => {
+			if (settled || stoppedByLimit) return;
+			const match = parseMatchLine(line);
+			if (!match) return;
+
+			if (totalMatched >= limit) {
+				stopForLimit();
+				return;
+			}
+
+			addMatch(matchesByFile, match.filePath, match.lineNum);
+			totalMatched++;
 		});
 
 		child.stderr.on("data", (chunk: string) => {
-			stderr += chunk;
+			stderr = appendLimitedStderr(stderr, chunk);
 		});
 
 		const onAbort = () => {
 			child.kill();
-			reject(new Error("Aborted"));
+			settleReject(new Error("Aborted"));
 		};
 		signal?.addEventListener("abort", onAbort, { once: true });
 
 		child.on("error", (err: Error) => {
-			signal?.removeEventListener("abort", onAbort);
-			reject(new Error(`ripgrep spawn error: ${err.message}`));
+			if (stoppedByLimit) return;
+			settleReject(new Error(`ripgrep spawn error: ${err.message}`));
 		});
 
 		child.on("close", (code: number | null) => {
-			signal?.removeEventListener("abort", onAbort);
+			if (settled) return;
+			if (stoppedByLimit) {
+				settleResolve();
+				return;
+			}
 			if (signal?.aborted) {
-				reject(new Error("Aborted"));
+				settleReject(new Error("Aborted"));
 				return;
 			}
 			// code === null means the process was killed (signal) or spawn failed
 			if (code === null) {
-				reject(new Error("ripgrep process terminated unexpectedly"));
+				settleReject(new Error("ripgrep process terminated unexpectedly"));
 				return;
 			}
 			// rg exits 2 for actual errors (invalid regex, unreadable path, etc.)
 			if (code === 2) {
-				reject(new Error(`ripgrep error: ${stderr.trim() || "unknown error"}`));
+				settleReject(new Error(`ripgrep error: ${stderr.trim() || "unknown error"}`));
 				return;
 			}
 			// code 0 (matches) and 1 (no matches) are both success from our perspective
-			resolve(stdoutChunks.join(""));
+			settleResolve();
 		});
 	});
 }
@@ -215,40 +311,13 @@ export function registerGrepTool(pi: ExtensionAPI): void {
 
 			// Async spawn: does not block the event loop; honors AbortSignal.
 			// runRg throws on process-level failures — never silently returns empty.
-			const stdout = await runRg(rgArgs, signal);
+			const { matchesByFile, matches: totalMatched, truncated } = await runRg(
+				rgArgs,
+				limit,
+				signal,
+			);
 
 			throwIfAborted(signal);
-
-			const matchesByFile = new Map<string, number[]>();
-			let totalMatched = 0;
-			let truncated = false;
-
-			const lines = stdout.split("\n");
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				let event: RgEvent;
-				try {
-					event = JSON.parse(line) as RgEvent;
-				} catch {
-					continue;
-				}
-				if (event.type !== "match") continue;
-
-				const matchEvent = event as RgMatchEvent;
-				const filePath = matchEvent.data.path.text;
-				const lineNum = matchEvent.data.line_number;
-
-				if (totalMatched >= limit) {
-					truncated = true;
-					break;
-				}
-
-				if (!matchesByFile.has(filePath)) {
-					matchesByFile.set(filePath, []);
-				}
-				matchesByFile.get(filePath)!.push(lineNum);
-				totalMatched++;
-			}
 
 			if (totalMatched === 0) {
 				return {

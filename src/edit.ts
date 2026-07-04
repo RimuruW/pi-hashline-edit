@@ -660,12 +660,12 @@ const editToolDefinition: EditToolDefinition = {
 			}
 
 			throwIfAborted(signal);
-			recordAppliedEdit(mutationTargetPath, appliedPayloadKey);
 			await writeFileAtomically(
 				mutationTargetPath,
 				bom + restoreLineEndings(result, originalEnding),
 				{ alreadyResolved: true },
 			);
+			recordAppliedEdit(mutationTargetPath, appliedPayloadKey);
 
 			// Update the snapshot slot with the post-edit content so chained edits
 			// using anchors from this edit's response can recover if a distant
