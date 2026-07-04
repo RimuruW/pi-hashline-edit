@@ -13,7 +13,7 @@ import {
 	isFuzzyEquivalentLine,
 } from "./hash";
 import {
-	HASHLINE_BARE_PREFIX_RE,
+	getHashlineBarePrefixRe,
 	type Anchor,
 	type HashlineEdit,
 } from "./parse";
@@ -204,10 +204,11 @@ function warnBareHashPrefixLines(
 	// Collect bare-prefix suspects up front: regex only. Almost every edit has
 	// none, so this lets the common path bail before paying for file hashes.
 	const suspects: { line: string; hash: string }[] = [];
+	const bareRe = getHashlineBarePrefixRe();
 	for (const edit of edits) {
 		if (edit.op === "replace_text") continue;
 		for (const line of edit.lines) {
-			const match = line.match(HASHLINE_BARE_PREFIX_RE);
+			const match = line.match(bareRe);
 			if (match) suspects.push({ line, hash: match[1]! });
 		}
 	}
@@ -226,7 +227,7 @@ function warnBareHashPrefixLines(
 				? ` ${matchCount} prefix(es) match existing line hashes in this file.`
 				: "";
 		warnings.push(
-			`${suspects.length} edit line(s) start with a 2-char hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}).${matchHint} If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
+			`${suspects.length} edit line(s) start with a hash and ":" (e.g. ${JSON.stringify(suspects[0]!.line)}).${matchHint} If you copied these from "read" output, they are hash prefixes, not file content — resend "lines" as literal content.`,
 		);
 	}
 }

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **grep tool (hashline-anchored ripgrep search, opt-in).** A new `grep` tool backed by ripgrep emits `LINE#HASH:content` anchors in the same format as `read` output. Anchors from `grep` results can be passed directly into `edit` without a prior `read`, closing the grep→edit flow without a separate round-trip. The tool is off by default: it is registered only when enabled via `~/.pi/agent/hashline.json` (`"grep": true`) and `rg` (ripgrep) is present on `PATH`, so installing the extension does not widen pi's active tool surface beyond `read`/`edit`. Results respect `.gitignore` by default and support context lines, glob scoping, and a configurable match limit.
+- **User configuration file (ADR 0006).** `~/.pi/agent/hashline.json` is read once at session start with schema `{"hashLength": 2, "grep": false}`. `hashLength` (integer 2–4, default 2) sets the per-line hash length in `read`/`grep` output and `edit` anchor validation; longer hashes reduce the silent false-accept rate at the user's own token cost, and do not reduce `[E_STALE_ANCHOR]` frequency. Anchors with a valid-alphabet hash of a *different* valid length get a dedicated diagnostic naming the session's hash length and directing a re-read, so a config change between sessions cannot strand models in retry loops. Invalid or malformed config falls back per-field to defaults with a one-time session warning — a broken config never disables the extension. Prompt files stay authored with 2-character examples; anchor-shaped example tokens are rewritten at load to the session length (byte-identical at the default). The `[E_INVALID_PATCH]` display-prefix rejection in `lines` matches all supported lengths (2–4) regardless of the session's setting, so rendered output copied from a stale transcript or a different-length configuration is still caught.
+- **Snapshot-merge stale-anchor recovery (ADR 0004).** `edit` now has a two-tier stale-anchor flow: (1) exact match against the live file (existing behavior); (2) if anchors are stale against the live file but valid against the model's last read snapshot, the edit is replayed against that snapshot and 3-way-merged onto the live file using `fuzzFactor: 0`. Recovery emits a mandatory warning in the tool response. If the snapshot is absent or the merge produces a conflict, the original `[E_STALE_ANCHOR]` error surfaces unchanged — no silent data loss.
+- **`read` raw mode.** `read` accepts `raw: true` to return plain file content without `LINE#HASH:` prefixes. Raw reads do not update the read snapshot and do not participate in stale-anchor recovery.
+- **`[E_NOOP_LOOP]` guard.** Three consecutive byte-identical no-op edits with the same payload on the same file throw `[E_NOOP_LOOP]`, preventing the model from silently looping on an edit that produces no change.
+- **Mixed line-ending warning.** `edit` emits a warning when the file being written contains a mix of `\r\n` and `\n` line endings.
+- **File-not-found error points to `write` tool.** When `edit` targets a path that does not exist, the error message now explicitly suggests using the `write` (or equivalent create) tool instead.
+
+### Changed
+
+- **Breaking (protocol): context-based line hashing (ADR 0003).** Every line hash is now computed from the line's content together with its immediate neighbors: `xxHash32(prev + "\0" + curr + "\0" + next)`, seed 0. The line-number seed for symbol-only lines is removed. **All anchors from earlier context-free hashline sessions are stale by definition.** Side effects: editing line N now invalidates anchors for N−1, N, and N+1; two identical lines with different neighbors receive different hashes; distant edits no longer perturb unrelated anchors.
+- **`textHint` dual role.** On hash mismatch with a `textHint` present, forgiveness recomputes the hint's hash using the current file's neighbor context (consistent with ADR 0003). On hash match with a `textHint` that does not fuzzy-match the actual line, the anchor is treated as stale — closing the silent 1/256 collision path.
+- **Read snapshot updated on edit.** The single-slot read snapshot (keyed by canonical path) is updated after every successfully applied `edit` in addition to non-raw `read`, so chained edits work without an intervening re-read.
+- **Hashline engine split.** `src/hashline.ts` is refactored into `src/hashline/{hash,parse,apply,format}.ts` for maintainability. The public API surface is unchanged.
+
+### Infrastructure
+
+- GitHub Actions CI, Biome linter, `noUnusedLocals` TypeScript flag added.
+
 ## [0.7.0] - 2026-06-12
 
 ### Added

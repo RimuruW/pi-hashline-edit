@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Prior to 0.8.0, each line's 2-char hash was computed from its content alone (plus a line-number seed for symbol-only lines). This meant two identical `}` lines at different positions in a file could collide in hash space unless they happened to be at different line numbers — a fragile disambiguation that depended on file position, not content. More importantly, a distant edit at line 80 left the hash of line 5 unchanged, but an edit anywhere on the file could shift line numbers, silently staling all symbol-only anchors (whose seed was their old line number).
+Before ADR 0003, each line's 2-char hash was computed from its content alone (plus a line-number seed for symbol-only lines). This meant two identical `}` lines at different positions in a file could collide in hash space unless they happened to be at different line numbers — a fragile disambiguation that depended on file position, not content. More importantly, a distant edit at line 80 left the hash of line 5 unchanged, but an edit anywhere on the file could shift line numbers, silently staling all symbol-only anchors (whose seed was their old line number).
 
 The `textHint` field (the `:content` suffix on an anchor) already provided a cross-check path, but the forgiveness logic recomputed the hint's hash using the old `(lineNum, hint)` signature — not the current file's neighbor context — making it inconsistent with how the main hash was computed.
 
@@ -23,7 +23,7 @@ Replace the per-line hash function with a context-sensitive one:
 
 ## Consequences
 
-- Every hash value changes. This is a breaking change shipped in 0.8.0; anchors from pre-0.8.0 sessions are all stale by definition.
+- Every hash value changes. This is a breaking change; anchors from earlier context-free hashline sessions are all stale by definition.
 - Editing line N invalidates anchors for lines N−1, N, and N+1 (they are now adjacent). This is intentional: an anchor immediately next to a changed line should be treated as unsafe.
 - Distant edits (outside the ±1 window) leave an anchor's hash unchanged, reducing spurious stale errors on large files.
 - Two identical lines with different immediate neighbors receive different hashes, eliminating the symbol-only line-number seed workaround.

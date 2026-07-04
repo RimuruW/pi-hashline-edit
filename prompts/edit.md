@@ -1,4 +1,4 @@
-Patch a text file at `LINE#HASH` anchors copied verbatim from the latest `read` of that file.
+Patch a text file at `LINE#HASH` anchors copied verbatim from the latest read/grep result or the anchors block of a previous edit.
 
 Batch every change to a file into one `edit` call: all operations go in the `edits` array, every edit sets `op`, and all anchors must come from the same pre-edit read. Edits validate against one snapshot and apply together, so line numbers never shift between entries of the same call.
 

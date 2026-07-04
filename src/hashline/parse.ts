@@ -5,6 +5,12 @@
  */
 
 import { NIBBLE_STR, HASH_ALPHABET_RE } from "./hash";
+import {
+	getHashLength,
+	exampleAnchor,
+	HASH_LENGTH_MIN,
+	HASH_LENGTH_MAX,
+} from "../config";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -25,20 +31,29 @@ export type HashlineToolEdit = {
 };
 
 /**
- * Patterns used to detect (and reject) hashline display prefixes inside edit
- * payloads. The runtime no longer strips them — the model must send literal
- * file content. Matching any of these triggers `[E_INVALID_PATCH]`.
+ * Display-prefix rejection regexes. These patterns detect (and reject)
+ * hashline display prefixes inside edit payloads. The runtime no longer
+ * strips them — the model must send literal file content. Matching any of
+ * these triggers `[E_INVALID_PATCH]`.
+ *
+ * They match ALL supported hash lengths, not just the session's: the
+ * rejection semantics are "this is rendered read/diff output", and rendered
+ * output can come from a stale transcript or a different-length
+ * configuration. A 5+-char run backtracks to no match — that shape is not a
+ * valid display prefix under any configuration and passes as literal content.
  */
-const HASHLINE_PREFIX_RE = new RegExp(
-	`^\\s*(?:>>>|>>)?\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{2}:`,
+const DISPLAY_HASH_QUANT = `[${NIBBLE_STR}]{${HASH_LENGTH_MIN},${HASH_LENGTH_MAX}}`;
+const DISPLAY_PREFIX_RE = new RegExp(
+	`^\\s*(?:>>>|>>)?\\s*(?:\\d+\\s*#\\s*|#\\s*)${DISPLAY_HASH_QUANT}:`,
 );
-const HASHLINE_PREFIX_PLUS_RE = new RegExp(
-	`^\\+\\s*(?:\\d+\\s*#\\s*|#\\s*)[${NIBBLE_STR}]{2}:`,
+const DISPLAY_PREFIX_PLUS_RE = new RegExp(
+	`^\\+\\s*(?:\\d+\\s*#\\s*|#\\s*)${DISPLAY_HASH_QUANT}:`,
 );
+
 const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
 
 /**
- * Bare hashline prefix: a 2-char hash followed by ":" with no "LINE#" part
+ * Bare hashline prefix: an N-char hash followed by ":" with no "LINE#" part
  * (e.g. "KK:### heading", "TP:text", "TJ:"). Capture group 1 is the hash.
  *
  * This is the partial-hash failure mode from issue #24: the model copies a hash
@@ -46,21 +61,28 @@ const DIFF_MINUS_RE = /^-\s*\d+\s{4}/;
  * single such line is genuinely ambiguous — "TS: foo", "PR: bar", "SK: key" are
  * legitimate YAML keys / abbreviations — so it is never rejected on shape alone.
  * Disambiguation happens against the file's actual hash set in
- * `rejectOrWarnBareHashPrefixLines`.
+ * `warnBareHashPrefixLines`.
+ *
+ * Returns a fresh RegExp reflecting the current configured hash length so that
+ * test helpers like `__setHashLengthForTests` take effect immediately.
  */
-export const HASHLINE_BARE_PREFIX_RE = new RegExp(`^\\s*([${NIBBLE_STR}]{2}):`);
+export function getHashlineBarePrefixRe(): RegExp {
+	return new RegExp(`^\\s*([${NIBBLE_STR}]{${getHashLength()}}):`);
+}
 
 // ─── Parsing ────────────────────────────────────────────────────────────
 
 function diagnoseLineRef(ref: string): string {
 	const trimmed = ref.trim();
 	const core = ref.replace(/^\s*[>+-]*\s*/, "").trim();
+	const configLen = getHashLength();
+	const example = exampleAnchor();
 
 	if (!core.length) {
-		return `[E_BAD_REF] Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+		return `[E_BAD_REF] Invalid line reference "${ref}". Expected "LINE#HASH" (e.g. "${example}").`;
 	}
 	if (/^\d+\s*$/.test(core)) {
-		return `[E_BAD_REF] Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "5#MQ").`;
+		return `[E_BAD_REF] Invalid line reference "${ref}": missing hash, use "LINE#HASH" from read output (e.g. "${example}").`;
 	}
 	if (/^\d+\s*:/.test(core)) {
 		return `[E_BAD_REF] Invalid line reference "${ref}": wrong separator, use "LINE#HASH" instead of "LINE:...".`;
@@ -73,8 +95,16 @@ function diagnoseLineRef(ref: string): string {
 		if (line < 1) {
 			return `[E_BAD_REF] Line number must be >= 1, got ${line} in "${ref}".`;
 		}
-		if (hash.length !== 2) {
-			return `[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`;
+		if (hash.length !== configLen) {
+			// Distinguish: looks like a valid anchor from a different length config vs. plain invalid.
+			if (
+				HASH_ALPHABET_RE.test(hash) &&
+				hash.length >= HASH_LENGTH_MIN &&
+				hash.length <= HASH_LENGTH_MAX
+			) {
+				return `[E_BAD_REF] Invalid line reference "${ref}": hash length is ${configLen} in this session, but this anchor has ${hash.length} characters — it looks like an anchor from a stale context or a different configuration. Re-read the file to get current anchors.`;
+			}
+			return `[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly ${configLen} characters from ${NIBBLE_STR} (e.g. "${example}").`;
 		}
 		if (!HASH_ALPHABET_RE.test(hash)) {
 			return `[E_BAD_REF] Invalid line reference "${ref}": hash uses invalid characters, hashes use alphabet ${NIBBLE_STR} only.`;
@@ -90,7 +120,7 @@ function diagnoseLineRef(ref: string): string {
 		return `[E_BAD_REF] Line number must be >= 1, got 0 in "${ref}".`;
 	}
 
-	return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
+	return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "${example}").`;
 }
 
 // Parses LINE#HASH format, tolerating leading ">+-" and whitespace (from
@@ -111,9 +141,20 @@ function parseAnchorRef(ref: string): Anchor {
 	}
 
 	const hash = match[2]!;
-	if (hash.length !== 2) {
+	const configLen = getHashLength();
+	if (hash.length !== configLen) {
+		// Distinguish: looks like a valid anchor from a different length config vs. plain invalid.
+		if (
+			HASH_ALPHABET_RE.test(hash) &&
+			hash.length >= HASH_LENGTH_MIN &&
+			hash.length <= HASH_LENGTH_MAX
+		) {
+			throw new Error(
+				`[E_BAD_REF] Invalid line reference "${ref}": hash length is ${configLen} in this session, but this anchor has ${hash.length} characters — it looks like an anchor from a stale context or a different configuration. Re-read the file to get current anchors.`,
+			);
+		}
 		throw new Error(
-			`[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly 2 characters from ${NIBBLE_STR}.`,
+			`[E_BAD_REF] Invalid line reference "${ref}": hash must be exactly ${configLen} characters from ${NIBBLE_STR} (e.g. "${exampleAnchor()}").`,
 		);
 	}
 
@@ -141,14 +182,14 @@ function parseAnchorRef(ref: string): Anchor {
  *
  * This covers the unambiguous full `LINE#HASH:` / diff `+/-` forms, rejectable
  * on shape alone. The bare `HH:` variant (issue #24) is context-dependent and
- * lives in `rejectOrWarnBareHashPrefixLines`.
+ * lives in `warnBareHashPrefixLines`.
  */
 function assertNoDisplayPrefixes(lines: string[]): void {
 	for (const line of lines) {
 		if (!line.length) continue;
 		if (
-			HASHLINE_PREFIX_RE.test(line) ||
-			HASHLINE_PREFIX_PLUS_RE.test(line) ||
+			DISPLAY_PREFIX_RE.test(line) ||
+			DISPLAY_PREFIX_PLUS_RE.test(line) ||
 			DIFF_MINUS_RE.test(line)
 		) {
 			throw new Error(

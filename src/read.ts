@@ -8,35 +8,30 @@ import {
 	type TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { readFileSync } from "fs";
 import { access as fsAccess } from "fs/promises";
 import { constants } from "fs";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { loadFileKindAndText } from "./file-kind";
 import { formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
+import { loadPrompt } from "./prompt-loader";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
 import { resolveMutationTargetPath } from "./fs-write";
 import { rememberReadSnapshot } from "./read-snapshot";
 import { clearAppliedPayload } from "./noop-loop-guard";
 
-const READ_DESC = readFileSync(
-	new URL("../prompts/read.md", import.meta.url),
-	"utf-8",
-)
+const READ_DESC = loadPrompt(new URL("../prompts/read.md", import.meta.url))
 	.replaceAll("{{DEFAULT_MAX_LINES}}", String(DEFAULT_MAX_LINES))
 	.replaceAll("{{DEFAULT_MAX_BYTES}}", formatSize(DEFAULT_MAX_BYTES))
 	.trim();
 
-const READ_PROMPT_SNIPPET = readFileSync(
+const READ_PROMPT_SNIPPET = loadPrompt(
 	new URL("../prompts/read-snippet.md", import.meta.url),
-	"utf-8",
 ).trim();
 
-const READ_PROMPT_GUIDELINES = readFileSync(
+const READ_PROMPT_GUIDELINES = loadPrompt(
 	new URL("../prompts/read-guidelines.md", import.meta.url),
-	"utf-8",
 )
 	.split("\n")
 	.map((line) => line.trim())

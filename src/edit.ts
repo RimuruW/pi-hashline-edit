@@ -6,7 +6,6 @@ import type {
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "@sinclair/typebox";
 import { constants } from "fs";
-import { readFileSync } from "fs";
 import { access as fsAccess } from "fs/promises";
 import {
 	detectLineEnding,
@@ -26,6 +25,7 @@ import {
 } from "./hashline";
 import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
+import { loadPrompt } from "./prompt-loader";
 import { throwIfAborted } from "./runtime";
 import {
 	buildChangedResponse,
@@ -158,19 +158,14 @@ export type EditRequestParams = {
 	edits: HashlineToolEdit[];
 };
 
-const EDIT_DESC = readFileSync(
-	new URL("../prompts/edit.md", import.meta.url),
-	"utf-8",
-).trim();
+const EDIT_DESC = loadPrompt(new URL("../prompts/edit.md", import.meta.url)).trim();
 
-const EDIT_PROMPT_SNIPPET = readFileSync(
+const EDIT_PROMPT_SNIPPET = loadPrompt(
 	new URL("../prompts/edit-snippet.md", import.meta.url),
-	"utf-8",
 ).trim();
 
-const EDIT_PROMPT_GUIDELINES = readFileSync(
+const EDIT_PROMPT_GUIDELINES = loadPrompt(
 	new URL("../prompts/edit-guidelines.md", import.meta.url),
-	"utf-8",
 )
 	.split("\n")
 	.map((line) => line.trim())

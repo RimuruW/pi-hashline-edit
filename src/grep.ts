@@ -2,21 +2,17 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { spawn, spawnSync } from "child_process";
-import { readFileSync } from "fs";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { loadFileKindAndText } from "./file-kind";
 import { formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
+import { loadPrompt } from "./prompt-loader";
 import { throwIfAborted } from "./runtime";
 
-const GREP_DESC = readFileSync(
-	new URL("../prompts/grep.md", import.meta.url),
-	"utf-8",
-).trim();
+const GREP_DESC = loadPrompt(new URL("../prompts/grep.md", import.meta.url)).trim();
 
-const GREP_PROMPT_SNIPPET = readFileSync(
+const GREP_PROMPT_SNIPPET = loadPrompt(
 	new URL("../prompts/grep-snippet.md", import.meta.url),
-	"utf-8",
 ).trim();
 
 const DEFAULT_LIMIT = 50;

@@ -3,5 +3,6 @@
 	"entry": ["index.ts!"],
 	"project": ["index.ts!", "src/**/*.ts!", "test/**/*.ts"],
 	"ignoreBinaries": ["rg"],
-	"ignoreExportsUsedInFile": true
+	"ignoreExportsUsedInFile": true,
+	"tags": ["-@internal"]
 }

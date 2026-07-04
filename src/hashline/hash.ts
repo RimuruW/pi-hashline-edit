@@ -5,6 +5,7 @@
  */
 
 import * as XXH from "xxhashjs";
+import { getHashLength } from "../config";
 
 // ─── Hash computation ───────────────────────────────────────────────────
 
@@ -14,17 +15,15 @@ import * as XXH from "xxhashjs";
  * - Visually confusable letters: D, G, I, L, O (look like digits 0, 6, 1, 1, 0)
  * - Common vowels A, E, I, O, U (prevents accidental English words)
  *
- * This makes hash references like "5#MQ" unambiguous — they can never be
- * mistaken for code content, hex literals, or natural language.
+ * At hash length 2 these properties hold unconditionally. At lengths 3–4, the
+ * alphabet still avoids hex and visually confusing characters, but longer tokens
+ * drawn from real uppercase identifiers (HTTP methods, MQTT keywords, etc.) may
+ * coincidentally share the same character set. Detectors must not rely on shape
+ * alone to distinguish anchors from content — context and position remain the
+ * authoritative signals.
  */
 export const NIBBLE_STR = "ZPMQVRWSNKTXJBYH";
 export const HASH_ALPHABET_RE = new RegExp(`^[${NIBBLE_STR}]+$`);
-
-export const DICT = Array.from({ length: 256 }, (_, i) => {
-	const h = i >>> 4;
-	const l = i & 0x0f;
-	return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
-});
 
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 export const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
@@ -39,19 +38,30 @@ export function normalizeHashInput(line: string): string {
 }
 
 /**
- * Compute a 2-char hash from a line's content and its immediate neighbors.
+ * Compute an N-char hash from a line's content and its immediate neighbors.
  * Using prev + "\0" + curr + "\0" + next as the hash input ensures:
  * - Distant edits no longer invalidate anchors (only same/adjacent lines affected).
  * - Adjacent-edit invalidation is intentional: editing near an anchor makes it stale.
- * - Silent 8-bit collisions now require the entire 3-line window to match.
+ * - Silent collisions now require the entire 3-line window to match.
  * All three inputs must already be normalized via normalizeHashInput.
+ *
+ * Hash length is taken from config at call time (default 2, configurable to 3–4).
+ * At length 2 the output is identical to the former DICT-based path: nibble-by-nibble
+ * encoding of the low 8 bits of xxh32 maps directly to DICT[byte].
  */
 export function computeHashFromContext(prev: string, curr: string, next: string): string {
-	return DICT[xxh32(prev + "\0" + curr + "\0" + next) & 0xff];
+	const len = getHashLength();
+	const h = xxh32(prev + "\0" + curr + "\0" + next);
+	// Extract `len` nibbles from the low 4*len bits of the hash value.
+	let result = "";
+	for (let i = len - 1; i >= 0; i--) {
+		result += NIBBLE_STR[(h >>> (i * 4)) & 0x0f];
+	}
+	return result;
 }
 
 /**
- * Compute the 2-char hash for a line at a given 0-based index within a file.
+ * Compute the N-char hash for a line at a given 0-based index within a file.
  * Neighbors outside the file boundaries use "" as their normalized value.
  */
 export function computeLineHash(fileLines: readonly string[], index: number): string {

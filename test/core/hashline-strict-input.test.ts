@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
 	applyHashlineEdits,
 	computeLineHash,
 	resolveEditAnchors,
 	type HashlineToolEdit,
 } from "../../src/hashline";
+import {
+	__resetConfigForTests,
+	__setHashLengthForTests,
+} from "../../src/config";
 
 describe("strict edit input (no autocorrection)", () => {
 	it("rejects array lines containing rendered LINE#HASH: prefixes", () => {
@@ -65,6 +69,67 @@ describe("strict edit input (no autocorrection)", () => {
 	});
 });
 
+describe("display prefixes from other hash-length configurations", () => {
+	afterEach(() => {
+		__resetConfigForTests();
+	});
+
+	it("rejects 4-char LINE#HASH: prefixes in a 2-char session", () => {
+		const tag = `1#${computeLineHash(["foo"], 0)}`;
+		const toolEdits: HashlineToolEdit[] = [
+			{ op: "replace", pos: tag, lines: ["1#MQQV:foo"] },
+		];
+		expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
+	});
+
+	it("rejects 3-char diff '+' prefixes in a 2-char session", () => {
+		const tag = `1#${computeLineHash(["foo"], 0)}`;
+		const toolEdits: HashlineToolEdit[] = [
+			{ op: "replace", pos: tag, lines: ["+1#MQQ:foo"] },
+		];
+		expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
+	});
+
+	it("rejects 2-char LINE#HASH: prefixes in a 4-char session", () => {
+		__setHashLengthForTests(4);
+		const tag = `1#${computeLineHash(["foo"], 0)}`;
+		const toolEdits: HashlineToolEdit[] = [
+			{ op: "replace", pos: tag, lines: ["1#ZP:foo"] },
+		];
+		expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
+	});
+
+	it("accepts a 5-char run — not a display prefix under any configuration", () => {
+		const tag = `1#${computeLineHash(["foo"], 0)}`;
+		const toolEdits: HashlineToolEdit[] = [
+			{ op: "replace", pos: tag, lines: ["1#MQQVZ:foo"] },
+		];
+		const resolved = resolveEditAnchors(toolEdits);
+		if (resolved[0]?.op === "replace") {
+			expect(resolved[0].lines).toEqual(["1#MQQVZ:foo"]);
+		} else {
+			throw new Error("expected replace");
+		}
+	});
+
+	it("keeps bare 'HH:' handling at the session length (no cross-length hard reject)", () => {
+		// A 4-char bare prefix in a 2-char session can never match the file's
+		// hash set, so it is treated as literal content — no reject, no warning.
+		const file = "alpha\nbeta";
+		const anchor = `1#${computeLineHash(file.split("\n"), 0)}`;
+		const result = applyHashlineEdits(
+			file,
+			resolveEditAnchors([
+				{ op: "replace", pos: anchor, lines: ["MQQV:literal"] },
+			]),
+		);
+		expect(result.warnings?.some((w) => /start with a hash/.test(w)) ?? false).toBe(
+			false,
+		);
+		expect(result.content).toContain("MQQV:literal");
+	});
+});
+
 describe("partial hash prefixes copied into content (issue #24)", () => {
 	// Fixture hash set is {KT, JB, KJ, PX}; "ZZ"/"ZP"/"TS" are confirmed misses.
 	const file = "alpha\nbeta\ngamma\ndelta";
@@ -100,7 +165,7 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
 		const result = applyTool([
 			{ op: "replace", pos: anchor, lines: ["ZZ:one", "ZP:two"] },
 		]);
-		expect(result.warnings?.some((w) => /2-char hash/.test(w))).toBe(true);
+		expect(result.warnings?.some((w) => /start with a hash/.test(w))).toBe(true);
 		// Content is written verbatim — strict semantics, no silent patching.
 		expect(result.content).toContain("ZZ:one");
 		expect(result.content).toContain("ZP:two");
@@ -110,7 +175,7 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
 		const result = applyTool([
 			{ op: "replace", pos: anchor, lines: ["TS: TypeScript"] },
 		]);
-		expect(result.warnings?.some((w) => /2-char hash/.test(w)) ?? false).toBe(
+		expect(result.warnings?.some((w) => /start with a hash/.test(w)) ?? false).toBe(
 			false,
 		);
 		expect(result.content).toContain("TS: TypeScript");
