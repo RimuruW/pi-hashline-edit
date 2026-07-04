@@ -32,6 +32,16 @@ describe("applyHashlineEdits — error handling", () => {
 		expect(() => applyHashlineEdits(content, edits)).toThrow(/does not exist/);
 	});
 
+	it("reports the visible line count (sentinel excluded) in OOB errors", () => {
+		const content = "aaa\nbbb\nccc\n"; // 3 visible lines, split("\n") yields 4
+		const edits: HashlineEdit[] = [
+			{ op: "replace", pos: { line: 99, hash: "ZZ" }, lines: ["x"] },
+		];
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/file has 3 lines/,
+		);
+	});
+
 	it("throws on range start > end", () => {
 		const content = "aaa\nbbb\nccc";
 		const edits: HashlineEdit[] = [

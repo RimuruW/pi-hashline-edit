@@ -248,6 +248,11 @@ type LineIndex = {
 	fileLines: string[];
 	lineStarts: number[];
 	hasTerminalNewline: boolean;
+	/**
+	 * Line count as the model sees it in read output: excludes the trailing
+	 * sentinel element produced by split("\n") on a newline-terminated file.
+	 */
+	visibleLineCount: number;
 };
 
 function buildLineIndex(content: string): LineIndex {
@@ -263,10 +268,14 @@ function buildLineIndex(content: string): LineIndex {
 		}
 	}
 
+	const hasTerminalNewline = content.endsWith("\n");
 	return {
 		fileLines,
 		lineStarts,
-		hasTerminalNewline: content.endsWith("\n"),
+		hasTerminalNewline,
+		visibleLineCount: hasTerminalNewline
+			? fileLines.length - 1
+			: fileLines.length,
 	};
 }
 
@@ -321,16 +330,14 @@ function computeInsertionBoundary(
 	}
 
 	// append
-	const fileLineCount = lineIndex.fileLines.length;
-	const eofBoundary =
-		lineIndex.hasTerminalNewline && fileLineCount > 0
-			? fileLineCount - 1
-			: fileLineCount;
 	if (!edit.pos) {
-		return eofBoundary;
+		return lineIndex.visibleLineCount;
 	}
-	if (lineIndex.hasTerminalNewline && edit.pos.line === fileLineCount) {
-		return eofBoundary;
+	if (
+		lineIndex.hasTerminalNewline &&
+		edit.pos.line === lineIndex.fileLines.length
+	) {
+		return lineIndex.visibleLineCount;
 	}
 	return edit.pos.line;
 }
@@ -594,16 +601,10 @@ function warnDuplicateInsert(
 	lineIndex: LineIndex,
 	warnings: string[],
 ): void {
-	const { fileLines, hasTerminalNewline } = lineIndex;
+	const { fileLines, visibleLineCount } = lineIndex;
 	const insertLines = edit.lines;
 	const n = insertLines.length;
 	if (n === 0) return;
-
-	// Exclude the trailing sentinel element produced by split("\n") on a
-	// newline-terminated file so adjacency comparisons use visible lines only.
-	const visibleLineCount = hasTerminalNewline
-		? fileLines.length - 1
-		: fileLines.length;
 
 	// Determine the slice of existing file lines to compare against.
 	let compareStart: number; // 0-based index into fileLines, inclusive
@@ -673,8 +674,10 @@ function validateAnchorEdits(
 
 	function validate(ref: Anchor): boolean {
 		if (ref.line < 1 || ref.line > lineIndex.fileLines.length) {
+			// Bound stays at fileLines.length (sentinel stays addressable for EOF
+			// append); the message reports the count the model saw in read output.
 			throw new Error(
-				`[E_RANGE_OOB] Line ${ref.line} does not exist (file has ${lineIndex.fileLines.length} lines)`,
+				`[E_RANGE_OOB] Line ${ref.line} does not exist (file has ${lineIndex.visibleLineCount} lines)`,
 			);
 		}
 		const line = lineIndex.fileLines[ref.line - 1]!;
