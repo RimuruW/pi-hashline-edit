@@ -119,6 +119,36 @@ Optional. Create `~/.pi/agent/hashline.json`:
 
 The file is read once at session start; there is no hot reload. Anchors from before a length change are invalid by design and produce a re-read hint. A missing file means defaults. Invalid values fall back to the defaults for that field and produce a one-time session warning; a broken config never disables the extension.
 
+## Q&A
+
+### Why only 2 hash characters by default? Wouldn't longer hashes prevent collisions?
+
+Two characters (256 buckets) paired with line numbers is reliable for single-edit workflows. Longer hashes do reduce the chance of a false match when line numbers shift, but they increase token cost on every `read` line, which compounds fast in large files. Set `hashLength` to 3 or 4 if you need extra safety for complex concurrent edits. The trade-off, and the token budget, are yours.
+
+### Why a custom 16-character alphabet instead of Base64 or hex?
+
+Three reasons. First, we drop visually ambiguous pairs (0/O, 1/l/I) so humans can scan logs without squinting. Second, no vowels: a hash will never accidentally spell `for`, `let`, `if`, or any other real code token. Anchors and code text always look physically different, so the model never conflates them. Third, the 16-char set keeps hashes compact: two chars give 256 buckets, three give 4096, enough range without bloat.
+
+### What happens with repeated lines -- blank lines, repeated JSON, identical braces?
+
+The hash is stateless: it depends on the current line plus its immediate neighbors (`prev + curr + next`), never on position or occurrence count. Two identical lines in different contexts get different hashes. When the context is also identical (consecutive blank lines, repeated identical objects), the line number in the anchor (e.g. `11#KT`) breaks the tie. No hidden counter, no global state. Editing one line never invalidates anchors dozens of lines away.
+
+### Why `E_STALE_ANCHOR` errors instead of silently fixing the offset?
+
+Silent patching corrupts code. When an anchor goes stale, the system first tries a 3-way snapshot merge. If the merge looks clean, it applies. If there is any risk of a false clean merge (the content around the edit has diverged in a way that makes the merge ambiguous), the system fails loudly with `E_STALE_ANCHOR` and hands you fresh anchors to retry. No heuristic relocation to a "close enough" line. In production code editing, determinism beats convenience every time.
+
+### Why not have the model pass back an explicit Snapshot_ID?
+
+Asking the model to track state adds failure modes: it can fabricate, misuse, or forget the ID. The anchors the model returns are the snapshot fingerprint. The system matches that set of `LINE#HASH` references against its internal pool and finds the version the model saw, with zero token overhead, no model-side tracking, and no risk of hallucinated IDs.
+
+### What is `textHint` (e.g. `11#KT: console.log(...)`) and why is it optional?
+
+`textHint` is an optional second factor. When an anchor's hash matches but the line number shifted (the 1/256 false-accept case), the runtime cross-checks the hint text against the actual file line. A mismatch catches the false accept before any edit touches the file. It is optional so the model can decide: pure hash when token budget is tight, hash+text when safety matters more. The model's own prompt instructions determine the strategy.
+
+### I have more questions. Where can I discuss this?
+
+Open an issue or send a PR. Edge cases, hash engine ideas, protocol suggestions: all welcome.
+
 ## Development
 
 Requires [Node.js](https://nodejs.org) and npm.
