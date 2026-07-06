@@ -108,7 +108,8 @@ Optional. Create `~/.pi/agent/hashline.json`:
 ```json
 {
   "hashLength": 2,
-  "grep": false
+  "grep": false,
+  "replaceText": true
 }
 ```
 
@@ -116,6 +117,7 @@ Optional. Create `~/.pi/agent/hashline.json`:
 |---|---|---|---|
 | `hashLength` | `2` | 2 to 4 | Characters per line hash in `read`/`grep` output and `edit` anchors. Longer hashes reduce the chance that a stale edit slips through undetected, at the cost of extra tokens on every line and every anchor. They do **not** reduce `[E_STALE_ANCHOR]` errors; stale anchors are rejected either way. |
 | `grep` | `false` | boolean | Registers the hashline-anchored `grep` tool (also requires ripgrep on `PATH`). |
+| `replaceText` | `true` | boolean | Allow the `replace_text` op (`oldText`/`newText` substring match). Set to `false` to enforce anchor-only edits: `replace_text` is removed from the schema and prompt, and any attempt to use it — including legacy top-level `oldText`/`newText` payloads — is rejected with a `[E_REPLACE_TEXT_DISABLED]` error that directs back to LINE#HASH anchors. |
 
 The file is read once at session start; there is no hot reload. Anchors from before a length change are invalid by design and produce a re-read hint. A missing file means defaults. Invalid values fall back to the defaults for that field and produce a one-time session warning; a broken config never disables the extension.
 

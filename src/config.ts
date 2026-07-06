@@ -1,8 +1,8 @@
 /**
  * Hashline configuration — loads ~/.pi/agent/hashline.json once at module init.
  *
- * Schema: { "hashLength": 2 | 3 | 4, "grep": boolean }
- * Defaults: hashLength=2, grep=false.
+ * Schema: { "hashLength": 2 | 3 | 4, "grep": boolean, "replaceText": boolean }
+ * Defaults: hashLength=2, grep=false, replaceText=true.
  * Any field that fails validation falls back to its default; loading errors
  * are collected as warnings, never thrown.
  */
@@ -16,6 +16,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 export type HashlineConfig = {
 	hashLength: 2 | 3 | 4;
 	grep: boolean;
+	replaceText: boolean;
 };
 
 /**
@@ -42,12 +43,13 @@ export function parseHashlineConfig(raw: unknown): {
 	const warnings: string[] = [];
 	let hashLength: 2 | 3 | 4 = 2;
 	let grep = false;
+	let replaceText = true;
 
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
 		warnings.push(
 			`hashline.json: expected an object at top level, got ${JSON.stringify(raw)}. Using defaults.`,
 		);
-		return { config: { hashLength, grep }, warnings };
+		return { config: { hashLength, grep, replaceText }, warnings };
 	}
 
 	const obj = raw as Record<string, unknown>;
@@ -76,13 +78,26 @@ export function parseHashlineConfig(raw: unknown): {
 		}
 	}
 
-	return { config: { hashLength, grep }, warnings };
+	// Validate replaceText
+	if ("replaceText" in obj) {
+		const rt = obj.replaceText;
+		if (typeof rt === "boolean") {
+			replaceText = rt;
+		} else {
+			warnings.push(
+				`hashline.json: "replaceText" must be a boolean; got ${JSON.stringify(rt)}. Using default (true).`,
+			);
+		}
+	}
+
+	return { config: { hashLength, grep, replaceText }, warnings };
 }
 
 // ─── Module-level singleton ──────────────────────────────────────────────
 
 let _hashLength: 2 | 3 | 4 = 2;
 let _grep = false;
+let _replaceText = true;
 let _warnings: string[] = [];
 
 function loadConfig(): void {
@@ -107,6 +122,7 @@ function loadConfig(): void {
 	const { config, warnings } = parseHashlineConfig(raw);
 	_hashLength = config.hashLength;
 	_grep = config.grep;
+	_replaceText = config.replaceText;
 	_warnings = warnings;
 }
 
@@ -121,6 +137,10 @@ export function getHashLength(): number {
 
 export function getGrepEnabled(): boolean {
 	return _grep;
+}
+
+export function getReplaceTextEnabled(): boolean {
+	return _replaceText;
 }
 
 export function getConfigWarnings(): string[] {
@@ -150,8 +170,14 @@ export function __setGrepEnabledForTests(v: boolean): void {
 }
 
 /** @internal */
+export function __setReplaceTextEnabledForTests(v: boolean): void {
+	_replaceText = v;
+}
+
+/** @internal */
 export function __resetConfigForTests(): void {
 	_hashLength = 2;
 	_grep = false;
+	_replaceText = true;
 	_warnings = [];
 }

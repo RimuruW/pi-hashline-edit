@@ -4,10 +4,12 @@ import { Type } from "@sinclair/typebox";
 import { spawn, spawnSync } from "child_process";
 import { createInterface } from "readline";
 import { normalizeToLF, stripBom } from "./edit-diff";
+import { resolveMutationTargetPath } from "./fs-write";
 import { loadFileKindAndText } from "./file-kind";
 import { formatHashlineRegion } from "./hashline";
 import { resolveToCwd } from "./path-utils";
 import { loadPrompt } from "./prompt-loader";
+import { rememberReadSnapshot } from "./read-snapshot";
 import { throwIfAborted } from "./runtime";
 
 const GREP_DESC = loadPrompt(new URL("../prompts/grep.md", import.meta.url)).trim();
@@ -360,6 +362,12 @@ export function registerGrepTool(pi: ExtensionAPI): void {
 					if (fileLines.length > 0 && fileLines[fileLines.length - 1] === "") {
 						fileLines = fileLines.slice(0, -1);
 					}
+
+					// Record snapshot so that edit's stale-anchor recovery and
+					// duplicate-edit guard work identically whether anchors came from
+					// read or grep. Uses the same canonical path convention as read.ts.
+					const canonicalWritePath = await resolveMutationTargetPath(filePath);
+					rememberReadSnapshot(canonicalWritePath, normalized);
 				} catch {
 					continue;
 				}

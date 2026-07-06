@@ -17,6 +17,7 @@ import {
 } from "./edit-diff";
 import { normalizeEditRequest } from "./edit-normalize";
 import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
+import { getReplaceTextEnabled } from "./config";
 import {
 	applyHashlineEdits,
 	computeChangedLineRange,
@@ -127,6 +128,7 @@ const hashlineReplaceTextEditSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+// Schema including replace_text (the default / replaceText=true shape).
 const hashlineEditItemSchema = Type.Union(
 	[
 		hashlineReplaceEditSchema,
@@ -140,6 +142,19 @@ const hashlineEditItemSchema = Type.Union(
 	},
 );
 
+// Schema with replace_text removed (replaceText=false shape).
+const hashlineEditItemSchemaNoReplaceText = Type.Union(
+	[
+		hashlineReplaceEditSchema,
+		hashlineAppendEditSchema,
+		hashlinePrependEditSchema,
+	],
+	{
+		description:
+			'discriminated edit item. "replace" uses pos/end/lines; "append" and "prepend" use optional pos + lines.',
+	},
+);
+
 export const hashlineEditToolSchema = Type.Object(
 	{
 		path: Type.String({ description: "path" }),
@@ -150,6 +165,16 @@ export const hashlineEditToolSchema = Type.Object(
 		// before this schema is validated. By the time AJV sees the request those
 		// fields no longer exist, so the published schema stays minimal and the
 		// model is never shown a non-hashline path. See src/edit-normalize.ts.
+	},
+	{ additionalProperties: false },
+);
+
+// Schema published to the model when replaceText=false: replace_text op is
+// absent so the model never sees it as a valid option.
+const hashlineEditToolSchemaNoReplaceText = Type.Object(
+	{
+		path: Type.String({ description: "path" }),
+		edits: Type.Array(hashlineEditItemSchemaNoReplaceText, { description: "edits over $path" }),
 	},
 	{ additionalProperties: false },
 );
@@ -463,11 +488,34 @@ function renderTextResult(
 	return text;
 }
 
-const editToolDefinition: EditToolDefinition = {
+/**
+ * Teaching error thrown when a replace_text edit arrives but replaceText is
+ * disabled in config. Fires after normalization so legacy top-level
+ * oldText/newText payloads (which normalize to op:"replace_text") also hit
+ * this path instead of a generic schema error.
+ */
+function assertReplaceTextNotDisabled(edits: HashlineToolEdit[]): void {
+	const hasReplaceText = edits.some((e) => e.op === "replace_text");
+	if (!hasReplaceText) {
+		return;
+	}
+	throw new Error(
+		`[E_REPLACE_TEXT_DISABLED] The replace_text op is disabled in your hashline configuration (replaceText: false). ` +
+		`Re-read the file to get current LINE#HASH anchors, then rewrite this edit using the "replace", "append", or "prepend" ops with those anchors instead.`,
+	);
+}
+
+function buildEditToolDefinition(): EditToolDefinition {
+	const replaceTextEnabled = getReplaceTextEnabled();
+	const parameters = replaceTextEnabled
+		? hashlineEditToolSchema
+		: hashlineEditToolSchemaNoReplaceText;
+
+	return {
 	name: "edit",
 	label: "Edit",
 	description: EDIT_DESC,
-	parameters: hashlineEditToolSchema,
+	parameters,
 	promptSnippet: EDIT_PROMPT_SNIPPET,
 	promptGuidelines: EDIT_PROMPT_GUIDELINES,
 	// Converge model dialects (native oldText/newText, JSON-string edits, missing
@@ -476,6 +524,9 @@ const editToolDefinition: EditToolDefinition = {
 	prepareArguments: (args: unknown) => {
 		const normalized = normalizeEditRequest(args);
 		assertEditRequest(normalized);
+		if (!replaceTextEnabled) {
+			assertReplaceTextNotDisabled(normalized.edits);
+		}
 		return normalized;
 	},
 	// Force the default tool shell (Box with pending/success/error background) so
@@ -592,6 +643,9 @@ const editToolDefinition: EditToolDefinition = {
 		// prepareArguments having run. Idempotent on canonical input.
 		const normalized = normalizeEditRequest(params);
 		assertEditRequest(normalized);
+		if (!replaceTextEnabled) {
+			assertReplaceTextNotDisabled(normalized.edits);
+		}
 		const normalizedParams = normalized;
 		const path = normalizedParams.path;
 		const absolutePath = resolveToCwd(path, ctx.cwd);
@@ -685,8 +739,9 @@ const editToolDefinition: EditToolDefinition = {
 			});
 		});
 	},
-};
+	};
+}
 
 export function registerEditTool(pi: ExtensionAPI): void {
-	pi.registerTool(editToolDefinition);
+	pi.registerTool(buildEditToolDefinition());
 }

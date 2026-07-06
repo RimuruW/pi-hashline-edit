@@ -11,7 +11,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { getHashLength } from "./config";
+import { getHashLength, getReplaceTextEnabled } from "./config";
 
 /**
  * Padding characters used to extend example hash tokens beyond 2 characters.
@@ -43,11 +43,34 @@ export function rewriteAnchorExamples(text: string, len: number): string {
 }
 
 /**
+ * Remove the `replace_text` op bullet and its inline `oldText`/`newText`
+ * description from a prompt string. Matches the exact authored line in
+ * prompts/edit.md; other prompt files that have no such line are returned
+ * unchanged.
+ *
+ * The authored line is:
+ *   - `replace_text` — `{ "op": "replace_text", "oldText": ..., "newText": ... }` …
+ *
+ * The regex matches the leading `- ` bullet, the op name, and everything to the
+ * end of the line, including a trailing newline if present.
+ */
+export function stripReplaceTextFromPrompt(text: string): string {
+	return text.replace(/^- `replace_text`[^\n]*\n?/m, "");
+}
+
+/**
  * Read a prompt file and rewrite its anchor examples to match the configured
  * hash length. The rewrite is identity when hash length is 2 (the default),
  * so production deployments that never change the config see no difference.
+ *
+ * When replaceText is disabled in config, also strips all replace_text
+ * references from the prompt so the model never sees the op as an option.
  */
 export function loadPrompt(url: URL): string {
 	const text = readFileSync(url, "utf8");
-	return rewriteAnchorExamples(text, getHashLength());
+	const withAnchors = rewriteAnchorExamples(text, getHashLength());
+	if (!getReplaceTextEnabled()) {
+		return stripReplaceTextFromPrompt(withAnchors);
+	}
+	return withAnchors;
 }
