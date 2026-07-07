@@ -61,13 +61,26 @@ export async function withTempDirectory(
 }
 
 /**
- * Tool definition as stored by the fake registry. TParams stays at the TSchema
- * base and TDetails is `any` because tests assert the concrete `details` shape
- * at runtime; the static surface this preserves is the execute/render method
- * signatures, where peer-dependency drift would otherwise surface only at
- * runtime.
+ * Tool details surfaced in tests. Unknown keys stay allowed because this fake
+ * registry stores read/edit tools together, while test assertions pin only the
+ * detail fields they exercise.
  */
-export type RegisteredToolDefinition = ToolDefinition<TSchema, any, any>;
+type RegisteredToolDetails = {
+	diff?: string;
+	compatibility?: unknown;
+	warnings?: unknown[];
+	classification?: string;
+	snapshotId?: string;
+	[key: string]: unknown;
+};
+
+/**
+ * Tool definition as stored by the fake registry. TParams stays at the TSchema
+ * base; details use the narrow test-facing shape above. The static surface this
+ * preserves is the execute/render method signatures, where peer-dependency
+ * drift would otherwise surface only at runtime.
+ */
+export type RegisteredToolDefinition = ToolDefinition<TSchema, RegisteredToolDetails, unknown>;
 
 export function makeFakePiRegistry(): {
 	pi: ExtensionAPI;

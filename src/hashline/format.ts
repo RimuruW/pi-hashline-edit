@@ -87,8 +87,13 @@ export function computeChangedLineRange(
 		if (text.length === 0) {
 			return 0;
 		}
-		const lines = text.split("\n");
-		return text.endsWith("\n") ? lines.length - 1 : lines.length;
+		let count = 1;
+		let pos = text.indexOf("\n");
+		while (pos !== -1) {
+			count++;
+			pos = text.indexOf("\n", pos + 1);
+		}
+		return text.endsWith("\n") ? count - 1 : count;
 	}
 
 	if (original.length === 0) {

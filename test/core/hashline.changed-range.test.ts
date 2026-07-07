@@ -53,4 +53,17 @@ describe("computeChangedLineRange", () => {
 		const result = computeChangedLineRange("a\nb\nc", "");
 		expect(result).toEqual({ firstChangedLine: 1, lastChangedLine: 1 });
 	});
+
+	// countVisibleLines: empty string → 0 (no lines reported)
+	it("appending to empty original reports first line as changed", () => {
+		const result = computeChangedLineRange("", "a\n");
+		expect(result).toEqual({ firstChangedLine: 1, lastChangedLine: 1 });
+	});
+
+	// countVisibleLines: trailing newline → does not count the phantom empty line
+	it("appending after a trailing-newline original reports correct last line", () => {
+		// "a\nb\n" has 2 visible lines; result "a\nb\nc\n" has 3; changed = line 3.
+		const result = computeChangedLineRange("a\nb\n", "a\nb\nc\n");
+		expect(result).toEqual({ firstChangedLine: 3, lastChangedLine: 3 });
+	});
 });

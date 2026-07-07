@@ -4,8 +4,10 @@ import {
 	exampleAnchor,
 	getHashLength,
 	getGrepEnabled,
+	getReplaceTextEnabled,
 	__resetConfigForTests,
 	__setHashLengthForTests,
+	__setReplaceTextEnabledForTests,
 } from "../../src/config";
 
 afterEach(() => {
@@ -17,13 +19,13 @@ describe("parseHashlineConfig — validation", () => {
 		// Simulate: file not found path uses defaults directly, but parseHashlineConfig
 		// with a non-object input should warn and use defaults.
 		const { config, warnings } = parseHashlineConfig(null);
-		expect(config).toEqual({ hashLength: 2, grep: false });
+		expect(config).toEqual({ hashLength: 2, grep: false, replaceText: true });
 		expect(warnings).toHaveLength(1);
 	});
 
 	it("returns defaults with no warnings for empty object", () => {
 		const { config, warnings } = parseHashlineConfig({});
-		expect(config).toEqual({ hashLength: 2, grep: false });
+		expect(config).toEqual({ hashLength: 2, grep: false, replaceText: true });
 		expect(warnings).toHaveLength(0);
 	});
 
@@ -80,13 +82,13 @@ describe("parseHashlineConfig — validation", () => {
 
 	it("rejects non-object input (array) — returns defaults with warning", () => {
 		const { config, warnings } = parseHashlineConfig([{ hashLength: 3 }]);
-		expect(config).toEqual({ hashLength: 2, grep: false });
+		expect(config).toEqual({ hashLength: 2, grep: false, replaceText: true });
 		expect(warnings).toHaveLength(1);
 	});
 
 	it("rejects non-object input (string) — returns defaults with warning", () => {
 		const { config, warnings } = parseHashlineConfig("hashLength=3");
-		expect(config).toEqual({ hashLength: 2, grep: false });
+		expect(config).toEqual({ hashLength: 2, grep: false, replaceText: true });
 		expect(warnings).toHaveLength(1);
 	});
 
@@ -131,6 +133,39 @@ describe("exampleAnchor", () => {
 	});
 });
 
+describe("parseHashlineConfig — replaceText field", () => {
+	it("defaults replaceText to true when field is absent", () => {
+		const { config, warnings } = parseHashlineConfig({});
+		expect(config.replaceText).toBe(true);
+		expect(warnings).toHaveLength(0);
+	});
+
+	it("accepts replaceText: true", () => {
+		const { config, warnings } = parseHashlineConfig({ replaceText: true });
+		expect(config.replaceText).toBe(true);
+		expect(warnings).toHaveLength(0);
+	});
+
+	it("accepts replaceText: false", () => {
+		const { config, warnings } = parseHashlineConfig({ replaceText: false });
+		expect(config.replaceText).toBe(false);
+		expect(warnings).toHaveLength(0);
+	});
+
+	it('rejects replaceText: "yes" — falls back to true with warning', () => {
+		const { config, warnings } = parseHashlineConfig({ replaceText: "yes" });
+		expect(config.replaceText).toBe(true);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toMatch(/replaceText/);
+	});
+
+	it("rejects replaceText: 0 — falls back to true with warning", () => {
+		const { config, warnings } = parseHashlineConfig({ replaceText: 0 });
+		expect(config.replaceText).toBe(true);
+		expect(warnings).toHaveLength(1);
+	});
+});
+
 describe("test helpers isolation", () => {
 	it("__setHashLengthForTests changes getHashLength", () => {
 		__setHashLengthForTests(4);
@@ -142,5 +177,11 @@ describe("test helpers isolation", () => {
 		__resetConfigForTests();
 		expect(getHashLength()).toBe(2);
 		expect(getGrepEnabled()).toBe(false);
+		expect(getReplaceTextEnabled()).toBe(true);
+	});
+
+	it("__setReplaceTextEnabledForTests changes getReplaceTextEnabled", () => {
+		__setReplaceTextEnabledForTests(false);
+		expect(getReplaceTextEnabled()).toBe(false);
 	});
 });
