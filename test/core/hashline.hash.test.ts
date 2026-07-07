@@ -112,7 +112,7 @@ describe("strict hashline contract", () => {
 			pos: { line: 3, hash: computeLineHash(["a", "b", "target"], 1) }, // old context hash
 			lines: ["updated"],
 		};
-		expect(() => applyHashlineEdits(content, [stale])).toThrow(/1 stale anchor\./);
+		expect(() => applyHashlineEdits(content, [stale])).toThrow(/1 stale anchor:/);
 	});
 });
 

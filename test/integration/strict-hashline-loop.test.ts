@@ -41,7 +41,7 @@ describe("strict hashline tool loop", () => {
 					undefined,
 					ctx,
 				),
-			).rejects.toThrow(/1 stale anchor\./);
+			).rejects.toThrow(/1 stale anchor:/);
 
 			const secondRead = await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx);
 			const secondText = getText(secondRead);

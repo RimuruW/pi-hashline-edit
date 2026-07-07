@@ -44,7 +44,7 @@ export type HashlineToolEdit = {
  */
 const DISPLAY_HASH_QUANT = `[${NIBBLE_STR}]{${HASH_LENGTH_MIN},${HASH_LENGTH_MAX}}`;
 const DISPLAY_PREFIX_RE = new RegExp(
-	`^\\s*(?:>>>|>>)?\\s*(?:\\d+\\s*#\\s*|#\\s*)${DISPLAY_HASH_QUANT}:`,
+	`^\\s*(?:\\d+\\s*#\\s*|#\\s*)${DISPLAY_HASH_QUANT}:`,
 );
 const DISPLAY_PREFIX_PLUS_RE = new RegExp(
 	`^\\+\\s*(?:\\d+\\s*#\\s*|#\\s*)${DISPLAY_HASH_QUANT}:`,

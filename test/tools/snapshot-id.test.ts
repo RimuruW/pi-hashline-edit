@@ -161,9 +161,12 @@ describe("snapshotId surface (details-only after W2)", () => {
 				}
 
 				expect(errorMessage).toMatch(/^\[E_STALE_ANCHOR\]/);
+				// The stale anchor (the model's old hash for line 2) is named in the
+				// error; the current content window is no longer echoed with `>>>`.
 				expect(errorMessage).toContain(
-					`>>> 2#${computeLineHash(["one", "TWO!", "three", ""], 1)}:TWO!`,
+					`2#${computeLineHash(["one", "two", "three", ""], 1)}`,
 				);
+				expect(errorMessage).not.toContain(">>>");
 			},
 		);
 	});

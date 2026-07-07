@@ -19,6 +19,7 @@
     "index.ts",
     "src",
     "prompts",
+    "docs",
     "README.md",
     "LICENSE"
   ],

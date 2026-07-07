@@ -209,25 +209,34 @@ describe("formatMismatchError — Did you mean candidates", () => {
 
 		expect(errorMessage).toBeDefined();
 		expect(errorMessage).toContain("[E_STALE_ANCHOR]");
-		expect(errorMessage).toContain("Stale refs: 2#XX");
+		expect(errorMessage).toContain("2#XX");
 		expect(errorMessage).not.toContain("Did you mean");
 	});
 
-	it("AC3: existing mismatch/recovery tests — stale anchor without hint still shows >>>", () => {
-		expect(() =>
-			applyHashlineEdits("aaa", [{ op: "replace", pos: { line: 1, hash: "ZZ" }, lines: ["bbb"] }]),
-		).toThrow(/>>> 1#[A-Z]{2}:aaa/);
+	it("AC3: stale anchor without hint reports the ref and directs a re-read", () => {
+		let errorMessage: string | undefined;
+		try {
+			applyHashlineEdits("aaa", [
+				{ op: "replace", pos: { line: 1, hash: "ZZ" }, lines: ["bbb"] },
+			]);
+		} catch (e) {
+			errorMessage = (e as Error).message;
+		}
+		expect(errorMessage).toMatch(/^\[E_STALE_ANCHOR\] 1 stale anchor: 1#ZZ\./);
+		// No content window is echoed for a hintless stale anchor.
+		expect(errorMessage).not.toContain(">>>");
+		expect(errorMessage).not.toContain(":aaa");
 	});
 
-	it("AC3: multiple mismatches without hints still list Stale refs correctly", () => {
+	it("AC3: multiple mismatches without hints still list stale refs correctly", () => {
 		const content = "aaa\nbbb\nccc";
 		const edits = [
 			{ op: "replace" as const, pos: { line: 1, hash: "XX" }, lines: ["A"] },
 			{ op: "replace" as const, pos: { line: 3, hash: "YY" }, lines: ["C"] },
 		];
 
-		expect(() => applyHashlineEdits(content, edits)).toThrow(/2 stale anchors\./);
-		expect(() => applyHashlineEdits(content, edits)).toThrow(/Stale refs: 1#XX, 3#YY/);
+		expect(() => applyHashlineEdits(content, edits)).toThrow(/2 stale anchors:/);
+		expect(() => applyHashlineEdits(content, edits)).toThrow(/1#XX, 3#YY/);
 		// Neither has a textHint so no candidates section.
 		try {
 			applyHashlineEdits(content, edits);
@@ -237,11 +246,13 @@ describe("formatMismatchError — Did you mean candidates", () => {
 		}
 	});
 
-	it("candidate lines inside the ±2 display window are excluded from Did you mean", () => {
-		// "target" appears at line 2 (inside the ±2 display window of stale anchor pos=2) and line 10 (outside).
+	it("lists every content-matched candidate, including the anchor's own line", () => {
+		// "target" appears at line 2 (the stale anchor's own line, now with a drifted
+		// hash) and again at line 10. With the content window removed, both are
+		// legitimate content-matched candidates and both should be offered.
 		const currentContent = [
 			"line1",
-			"target",    // line 2 — inside the ±2 window of stale anchor at line 2
+			"target",    // line 2 — the stale anchor's own line
 			"line3",
 			"line4",
 			"line5",
@@ -249,7 +260,7 @@ describe("formatMismatchError — Did you mean candidates", () => {
 			"line7",
 			"line8",
 			"line9",
-			"target",    // line 10 — outside window
+			"target",    // line 10
 		].join("\n");
 
 		// Stale anchor refers to line 2 but with the wrong hash (so it mismatches).
@@ -265,13 +276,12 @@ describe("formatMismatchError — Did you mean candidates", () => {
 		}
 
 		expect(errorMessage).toBeDefined();
-		// Line 2 is inside the display window → should NOT appear in candidates.
-		// Line 10 is outside → should appear as candidate.
 		const currentLines = currentContent.split("\n");
+		const hash2 = computeLineHash(currentLines, 1);
 		const hash10 = computeLineHash(currentLines, 9);
-		expect(errorMessage).toContain(`10#${hash10}:target`);
-		// Line 2 should only appear in the standard display block (>>> or    ), not in candidates.
 		const candidateSection = errorMessage!.split("Did you mean")[1] ?? "";
-		expect(candidateSection).not.toContain("  2#");
+		// Both occurrences are surfaced as candidates with their current fresh hashes.
+		expect(candidateSection).toContain(`2#${hash2}:target`);
+		expect(candidateSection).toContain(`10#${hash10}:target`);
 	});
 });

@@ -20,7 +20,7 @@ describe("applyHashlineEdits — error handling", () => {
 			{ op: "replace", pos: { line: 2, hash: "XX" }, lines: ["BBB"] },
 		];
 		expect(() => applyHashlineEdits(content, edits)).toThrow(
-			/1 stale anchor\./,
+			/1 stale anchor:/,
 		);
 	});
 
@@ -64,7 +64,7 @@ describe("applyHashlineEdits — error handling", () => {
 			{ op: "replace", pos: { line: 3, hash: "YY" }, lines: ["C"] },
 		];
 		expect(() => applyHashlineEdits(content, edits)).toThrow(
-			/2 stale anchors\./,
+			/2 stale anchors:/,
 		);
 	});
 
@@ -76,23 +76,28 @@ describe("applyHashlineEdits — error handling", () => {
 		];
 
 		expect(() => applyHashlineEdits(content, edits)).toThrow(
-			/Stale refs: 1#XX, 3#YY/,
+			/1#XX, 3#YY/,
 		);
 	});
 
-	it("mismatch message exposes retryable >>> LINE#HASH snippets", () => {
-		expect(() =>
+	it("directs the model to re-read instead of echoing a content window", () => {
+		try {
 			applyHashlineEdits("aaa", [
-				{
-					op: "replace",
-					pos: { line: 1, hash: "ZZ" },
-					lines: ["bbb"],
-				},
-			]),
-		).toThrow(/>>> 1#[A-Z]{2}:aaa/);
+				{ op: "replace", pos: { line: 1, hash: "ZZ" }, lines: ["bbb"] },
+			]);
+			throw new Error("Expected applyHashlineEdits to throw for stale anchor.");
+		} catch (error: unknown) {
+			if (!(error instanceof Error)) throw error;
+			// The stale line's current content is no longer echoed back with a `>>>`
+			// marker — recovery is re-read, not slide-to-nearby.
+			expect(error.message).toMatch(/^\[E_STALE_ANCHOR\] 1 stale anchor: 1#ZZ\./);
+			expect(error.message).toContain("Re-read the file");
+			expect(error.message).not.toContain(">>>");
+			expect(error.message).not.toContain(":aaa");
+		}
 	});
 
-	it("retains still-valid range endpoints in retry snippets", () => {
+	it("lists a stale range's failed endpoint without echoing content lines", () => {
 		const content = "aaa\nbbb\nccc\nddd\neee";
 		const validEnd = makeTag(content, 5);
 
@@ -112,9 +117,11 @@ describe("applyHashlineEdits — error handling", () => {
 			if (!(error instanceof Error)) {
 				throw error;
 			}
-			expect(error.message).toContain(
-				`>>> ${validEnd.line}#${validEnd.hash}:eee`,
-			);
+			// Only the stale start endpoint is reported; the still-valid end anchor is
+			// not echoed back, and no `>>>` content window is produced.
+			expect(error.message).toContain("1#ZZ");
+			expect(error.message).not.toContain(">>>");
+			expect(error.message).not.toContain(":eee");
 		}
 	});
 

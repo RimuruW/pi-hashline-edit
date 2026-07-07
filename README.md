@@ -48,7 +48,7 @@ To edit, reference `LINE#HASH` anchors from the `read` output:
 }
 ```
 
-If the file has changed since the last read, stale anchors are caught and fresh ones are returned — no silent errors.
+If the file has changed since the last read, stale anchors are caught with explicit re-read guidance — no silent errors.
 
 ## How It Works
 
@@ -110,7 +110,7 @@ The file is read once at session start. A missing file means defaults. Invalid v
 ## Design Decisions
 
 - **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
-- **Stale anchors: recover, then fail.** A hash mismatch first attempts snapshot-merge recovery (3-way merge, fuzzFactor 0). If the snapshot is absent or the merge conflicts, `[E_STALE_ANCHOR]` surfaces with fresh anchors for retry.
+- **Stale anchors: recover, then fail.** A hash mismatch first attempts snapshot-merge recovery (3-way merge, fuzzFactor 0). If the snapshot is absent or the merge conflicts, `[E_STALE_ANCHOR]` tells the model to re-read; content-matched candidates are listed only when the anchor included a text hint.
 - **Strict patch content.** If `lines` contains display prefixes or diff markers, the edit is rejected with `[E_INVALID_PATCH]`. The model must send literal file content.
 - **Noop loop guard.** Three consecutive identical no-op edits throw `[E_NOOP_LOOP]`, preventing the model from silently looping.
 - **Atomic writes.** Files are written via temp-file-then-rename. Symlink chains are resolved; hard-linked files preserve the shared inode; permissions are preserved.

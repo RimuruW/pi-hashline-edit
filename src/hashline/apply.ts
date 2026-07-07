@@ -42,52 +42,20 @@ const CANDIDATE_PER_ANCHOR_LIMIT = 3;
 function formatMismatchError(
 	mismatches: HashMismatch[],
 	fileLines: string[],
-	retryLines: ReadonlySet<number> = new Set<number>(),
 ): string {
-	const retryLineSet = new Set<number>(retryLines);
-	for (const m of mismatches) {
-		retryLineSet.add(m.line);
-	}
-
-	const displayLines = new Set<number>();
-	for (const m of mismatches) {
-		for (
-			let i = Math.max(1, m.line - 2);
-			i <= Math.min(fileLines.length, m.line + 2);
-			i++
-		) {
-			displayLines.add(i);
-		}
-	}
-	for (const line of retryLineSet) {
-		displayLines.add(line);
-	}
-
-	const sorted = [...displayLines].sort((a, b) => a - b);
-	const maxDisplayLine = sorted[sorted.length - 1] ?? 1;
-	const lineNumberWidth = String(maxDisplayLine).length;
+	// The window of current file content around each stale line used to be echoed
+	// with `>>>`-marked retry lines. That was dropped: after an insert/delete the
+	// content now sitting at the stale line number is unrelated to what the model
+	// meant to edit, so echoing it wastes tokens and invites the model to "relocate"
+	// an anchor by line number — which the runtime never does. Instead we report the
+	// stale refs and let the content-matched "Did you mean" candidates below point at
+	// the real current anchors. Recovery is re-read, not slide-to-nearby.
 	const staleRefs = mismatches
 		.map((mismatch) => `${mismatch.line}#${mismatch.expected}`)
 		.join(", ");
 	const out: string[] = [
-		`[E_STALE_ANCHOR] ${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
-		`Stale refs: ${staleRefs}`,
-		"",
+		`[E_STALE_ANCHOR] ${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}: ${staleRefs}. Re-read the file to get current anchors; keep both endpoints for range replaces.`,
 	];
-
-	let prev = -1;
-	for (const num of sorted) {
-		if (prev !== -1 && num > prev + 1) out.push("    ...");
-		prev = num;
-		const content = fileLines[num - 1];
-		const hash = computeLineHash(fileLines, num - 1);
-		const prefix = `${String(num).padStart(lineNumberWidth, " ")}#${hash}`;
-		out.push(
-			retryLineSet.has(num)
-				? `>>> ${prefix}:${content}`
-				: `    ${prefix}:${content}`,
-		);
-	}
 
 	// Scan for fuzzy-match candidates for stale anchors that carry a textHint.
 	// Runs only on the error path after all mismatches are collected (O(n×mismatches), acceptable).
@@ -106,11 +74,8 @@ function formatMismatchError(
 			const hint = m.textHint!;
 			const matches: number[] = [];
 			for (let i = 0; i < fileLines.length; i++) {
-				const oneBasedLine = i + 1;
-				// Skip lines already shown in the display window.
-				if (displayLines.has(oneBasedLine)) continue;
 				if (isFuzzyEquivalentLine(hint, fileLines[i]!)) {
-					matches.push(oneBasedLine);
+					matches.push(i + 1);
 				}
 			}
 
@@ -667,9 +632,8 @@ function validateAnchorEdits(
 	lineIndex: LineIndex,
 	warnings: string[],
 	signal: AbortSignal | undefined,
-): { mismatches: HashMismatch[]; retryLines: Set<number> } {
+): { mismatches: HashMismatch[] } {
 	const mismatches: HashMismatch[] = [];
-	const retryLines = new Set<number>();
 	const acceptedFuzzyRefs = new Set<string>();
 
 	function validate(ref: Anchor): boolean {
@@ -688,7 +652,6 @@ function validateAnchorEdits(
 			// cross-checked for free. If the hint clearly differs from the actual line, the anchor is stale.
 			if (ref.textHint !== undefined && !isFuzzyEquivalentLine(ref.textHint, line)) {
 				mismatches.push({ line: ref.line, expected: ref.hash, actual, textHint: ref.textHint });
-				retryLines.add(ref.line);
 				return false;
 			}
 			return true;
@@ -711,7 +674,6 @@ function validateAnchorEdits(
 			}
 		}
 		mismatches.push({ line: ref.line, expected: ref.hash, actual, textHint: ref.textHint });
-		retryLines.add(ref.line);
 		return false;
 	}
 
@@ -727,12 +689,6 @@ function validateAnchorEdits(
 					}
 					const startOk = validate(edit.pos);
 					const endOk = validate(edit.end);
-					if (!startOk && endOk) {
-						retryLines.add(edit.end.line);
-					}
-					if (startOk && !endOk) {
-						retryLines.add(edit.pos.line);
-					}
 					if (!startOk || !endOk) continue;
 				} else if (!validate(edit.pos)) {
 					continue;
@@ -797,7 +753,7 @@ function validateAnchorEdits(
 		}
 	}
 
-	return { mismatches, retryLines };
+	return { mismatches };
 }
 
 /**
@@ -909,16 +865,14 @@ export function applyHashlineEdits(
 	const warnings: string[] = [];
 
 	// Phase 1: validate anchors
-	const { mismatches, retryLines } = validateAnchorEdits(
+	const { mismatches } = validateAnchorEdits(
 		workingEdits,
 		lineIndex,
 		warnings,
 		signal,
 	);
 	if (mismatches.length) {
-		throw new Error(
-			formatMismatchError(mismatches, lineIndex.fileLines, retryLines),
-		);
+		throw new Error(formatMismatchError(mismatches, lineIndex.fileLines));
 	}
 
 	warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);

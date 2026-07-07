@@ -18,7 +18,7 @@ Because each line's hash is computed from `prev + curr + next`. When line N chan
 
 ### Why `E_STALE_ANCHOR` errors instead of silently fixing the offset?
 
-Silent patching corrupts code. When an anchor goes stale, the system first tries a 3-way snapshot merge. If the merge looks clean, it applies. If there is any risk of a false clean merge (the content around the edit has diverged in a way that makes the merge ambiguous), the system fails loudly with `E_STALE_ANCHOR` and hands you fresh anchors to retry. No heuristic relocation to a "close enough" line. In production code editing, determinism beats convenience every time.
+Silent patching corrupts code. When an anchor goes stale, the system first tries a 3-way snapshot merge. If the merge looks clean, it applies. If there is any risk of a false clean merge (the content around the edit has diverged in a way that makes the merge ambiguous), the system fails loudly with `E_STALE_ANCHOR` and tells you to re-read; when the stale anchor included a text hint, the error may also list content-matched candidate anchors. No heuristic relocation to a "close enough" line. In production code editing, determinism beats convenience every time.
 
 ### Why is the snapshot merge recovery so strict (fuzzFactor 0)?
 
