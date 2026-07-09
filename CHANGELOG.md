@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-07-09
+
+### Added
+
+- **`replaceText` config to gate the `replace_text` operation.** A new `replaceText` flag in `~/.pi/agent/hashline.json` lets users disable the `replace_text` edit operation, and `edit` now records a grep snapshot so anchor recovery has more context to work with (#30).
+
+### Changed
+
+- **Stale-anchor errors no longer render a display window.** The `[E_STALE_ANCHOR]` diagnostic previously included a rendered window of surrounding lines; this is dropped in favor of directing the model to re-read, reducing noise and token cost.
+
+### Documentation
+
+- README reorganized, with the FAQ extracted into a dedicated file and a Q&A section added.
+
 ## [0.8.1] - 2026-07-04
 
 ### Fixed
