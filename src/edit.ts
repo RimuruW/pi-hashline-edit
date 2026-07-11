@@ -588,7 +588,7 @@ function buildEditToolDefinition(): EditToolDefinition {
 		return text;
 	},
 
-	renderResult(result, { isPartial }, theme, context) {
+	renderResult(result, { expanded, isPartial }, theme, context) {
 		if (isPartial) {
 			const text =
 				(context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
@@ -621,6 +621,7 @@ function buildEditToolDefinition(): EditToolDefinition {
 				renderedText,
 				typedResult.details,
 				previewBeforeResult,
+				expanded,
 				theme,
 			);
 			return renderTextResult(context.lastComponent, appliedChangedText);
