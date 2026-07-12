@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	buildAppliedChangedResultText,
 	colorDiffLines,
-	formatPreviewDiff,
-	formatResultDiff,
+	formatDiff,
 	type FgTheme,
 } from "../../src/edit-render";
 
@@ -45,20 +44,14 @@ describe("edit diff rendering", () => {
 		);
 		const theme = makeTokenTheme();
 
-		const collapsedPreview = formatPreviewDiff(diff, false, theme);
+		const collapsedPreview = formatDiff(diff, false, theme);
 		expect(collapsedPreview).toContain("line-10");
 		expect(collapsedPreview).not.toContain("line-11");
 		expect(collapsedPreview).toContain("ctrl+o to expand");
 
-		const expandedPreview = formatPreviewDiff(diff, true, theme);
+		const expandedPreview = formatDiff(diff, true, theme);
 		expect(expandedPreview).toContain("line-12");
 		expect(expandedPreview).not.toContain("to expand");
-
-		const collapsedResult = formatResultDiff(diff, false, theme);
-		expect(collapsedResult).toBe(collapsedPreview);
-
-		const expandedResult = formatResultDiff(diff, true, theme);
-		expect(expandedResult).toBe(expandedPreview);
 
 		const details = {
 			classification: "applied",
@@ -68,7 +61,23 @@ describe("edit diff rendering", () => {
 		expect(buildAppliedChangedResultText(undefined, details, undefined, false, theme)).toBe(collapsedPreview);
 		expect(buildAppliedChangedResultText(undefined, details, undefined, true, theme)).toBe(expandedPreview);
 
-		const collapsedAgain = formatPreviewDiff(diff, false, theme);
+		const collapsedAgain = formatDiff(diff, false, theme);
 		expect(collapsedAgain).not.toContain("line-11");
+	});
+
+	it("ignores the trailing newline sentinel when counting hidden diff lines", () => {
+		const theme = makeTokenTheme();
+		const makeLines = (count: number) =>
+			Array.from({ length: count }, (_, index) => ` line-${String(index + 1).padStart(2, "0")}`).join("\n");
+
+		const collapsedEleven = formatDiff(`${makeLines(11)}\n`, false, theme);
+		expect(collapsedEleven).toContain("(1 more diff lines,");
+
+		const collapsedTen = formatDiff(`${makeLines(10)}\n`, false, theme);
+		expect(collapsedTen).toContain("line-10");
+		expect(collapsedTen).not.toContain("to expand");
+
+		const expandedEleven = formatDiff(`${makeLines(11)}\n`, true, theme);
+		expect(expandedEleven.endsWith("<dim></dim>")).toBe(false);
 	});
 });

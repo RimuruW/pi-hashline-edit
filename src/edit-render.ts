@@ -74,12 +74,17 @@ export function colorDiffLines(lines: string[], theme: FgTheme): string[] {
 	});
 }
 
-export function formatPreviewDiff(
+export function formatDiff(
 	diff: string,
 	expanded: boolean,
 	theme: FgTheme,
 ): string {
 	const lines = diff.split("\n");
+	// A newline-terminated diff splits into a trailing empty sentinel; drop it
+	// so it is neither rendered nor counted as a hidden line.
+	if (lines.at(-1) === "") {
+		lines.pop();
+	}
 	const maxLines = expanded ? lines.length : EDIT_DIFF_PREVIEW_LINES;
 	const shown = colorDiffLines(lines.slice(0, maxLines), theme);
 
@@ -90,14 +95,6 @@ export function formatPreviewDiff(
 		);
 	}
 	return shown.join("\n");
-}
-
-export function formatResultDiff(
-	diff: string,
-	expanded: boolean,
-	theme: FgTheme,
-): string {
-	return formatPreviewDiff(diff, expanded, theme);
 }
 
 // ─── Edit call formatting ───────────────────────────────────────────────
@@ -125,7 +122,7 @@ export function formatEditCall(
 	}
 
 	if (state.preview.diff) {
-		text += `\n\n${formatPreviewDiff(state.preview.diff, expanded, theme)}`;
+		text += `\n\n${formatDiff(state.preview.diff, expanded, theme)}`;
 	}
 	return text;
 }
@@ -162,7 +159,7 @@ export function buildAppliedChangedResultText(
 	const sections: string[] = [];
 
 	if (details?.diff && details.diff !== previewDiff) {
-		sections.push(formatResultDiff(details.diff, expanded, theme));
+		sections.push(formatDiff(details.diff, expanded, theme));
 	}
 
 	if (details?.warnings.length) {

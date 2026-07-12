@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Edit diff rendering honors expansion state.** Preflight previews and settled result diffs now share a single 10-line collapsed limit, and expanding shows the complete diff. Previously previews were capped at 40 lines when expanded, while settled result diffs ignored expansion entirely and rendered unbounded. The truncation line uses Pi's native key-hint styling. TUI-only: result text and details sent to the model are unchanged (#31).
+- **Hidden-line count excludes the trailing newline sentinel.** A newline-terminated diff previously counted the empty segment after the final newline as a hidden line (reporting "2 more diff lines" when only 1 was hidden) and rendered a trailing blank line when expanded.
+
 ## [0.8.2] - 2026-07-09
 
 ### Added
