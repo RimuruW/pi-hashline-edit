@@ -1,4 +1,5 @@
 import * as Diff from "diff";
+import { getHashLength } from "./config";
 import { computeLineHash } from "./hashline";
 
 // ─── Line ending normalization ──────────────────────────────────────────
@@ -54,7 +55,9 @@ function formatDiffPreviewLine(
 ): string {
 	const paddedLineNum = String(lineNum).padStart(lineNumWidth, " ");
 	if (!includeHash) {
-		return `${prefix}${paddedLineNum}    ${line}`;
+		// Pad to the width of the `#<hash>:` prefix so columns stay aligned.
+		const pad = " ".repeat(getHashLength() + 2);
+		return `${prefix}${paddedLineNum}${pad}${line}`;
 	}
 	const hash = allNewLines !== undefined && newLineIndex !== undefined
 		? computeLineHash(allNewLines, newLineIndex)

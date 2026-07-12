@@ -41,6 +41,19 @@ describe("strict edit input (no autocorrection)", () => {
 		expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
 	});
 
+	// Deletion rows rendered at hashLength 3/4 pad to the wider `#<hash>:`
+	// column (5/6 spaces); the rejection must catch those shapes too.
+	it.each([
+		["hashLength=3", "-1     foo"],
+		["hashLength=4", "-1      foo"],
+	])("rejects diff deletion rows padded for %s", (_label, row) => {
+		const tag = `1#${computeLineHash(["foo"], 0)}`;
+		const toolEdits: HashlineToolEdit[] = [
+			{ op: "replace", pos: tag, lines: [row] },
+		];
+		expect(() => resolveEditAnchors(toolEdits)).toThrow(/^\[E_INVALID_PATCH\]/);
+	});
+
 	it("accepts plain literal content unchanged", () => {
 		const tag = `1#${computeLineHash(["foo"], 0)}`;
 		const toolEdits: HashlineToolEdit[] = [
