@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { readFile } from "fs/promises";
 import Ajv from "ajv";
 import {
@@ -14,6 +15,10 @@ import {
 	withTempFile,
 	type ToolRenderContext,
 } from "../support/fixtures";
+
+beforeAll(() => {
+	initTheme("dark");
+});
 
 describe("assertEditRequest", () => {
 	it("rejects unknown or unsupported root fields", () => {
@@ -328,5 +333,48 @@ describe("registerEditTool", () => {
 			expect(rendered).not.toContain("```text");
 			expect(result.details?.diff).toContain("+2");
 		});
+	});
+
+	it("passes expansion state through the registered applied-result renderer", () => {
+		const { pi, getTool } = makeFakePiRegistry();
+		registerEditTool(pi);
+		const editTool = getTool("edit");
+		const diff = Array.from({ length: 12 }, (_, index) => ` line-${String(index + 1).padStart(2, "0")}`).join(
+			"\n",
+		);
+		const result = {
+			content: [{ type: "text", text: "updated" }],
+			details: { classification: "applied", diff, warnings: [] },
+		};
+		const theme = makeTestTheme();
+		const state: Record<string, unknown> = {};
+		let lastComponent: unknown;
+		const render = (expanded: boolean): string => {
+			const component = editTool.renderResult!(
+				result as never,
+				{ expanded, isPartial: false },
+				theme,
+				{
+					args: { path: "sample.txt", edits: [] },
+					state,
+					isError: false,
+					lastComponent,
+				} as unknown as ToolRenderContext,
+			) as { render: (width: number) => string[] };
+			lastComponent = component;
+			return component.render(200).join("\n");
+		};
+
+		const collapsed = render(false);
+		expect(collapsed).toContain("line-10");
+		expect(collapsed).not.toContain("line-11");
+		expect(collapsed).toContain("to expand");
+
+		const expanded = render(true);
+		expect(expanded).toContain("line-12");
+		expect(expanded).not.toContain("to expand");
+
+		const collapsedAgain = render(false);
+		expect(collapsedAgain).not.toContain("line-11");
 	});
 });

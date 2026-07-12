@@ -5,7 +5,7 @@
  * formatting, Markdown rendering) from tool execution logic.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { keyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import { normalizeEditRequest } from "./edit-normalize";
 import type { EditRequestParams } from "./edit";
 import type { HashlineEditToolDetails } from "./edit-response";
@@ -18,6 +18,8 @@ export type RenderedMarkdownTheme = Pick<
 	Theme,
 	"fg" | "bold" | "italic" | "underline" | "strikethrough"
 >;
+
+const EDIT_DIFF_PREVIEW_LINES = 10;
 
 // ─── Render state ───────────────────────────────────────────────────────
 
@@ -78,19 +80,24 @@ export function formatPreviewDiff(
 	theme: FgTheme,
 ): string {
 	const lines = diff.split("\n");
-	const maxLines = expanded ? 40 : 16;
+	const maxLines = expanded ? lines.length : EDIT_DIFF_PREVIEW_LINES;
 	const shown = colorDiffLines(lines.slice(0, maxLines), theme);
 
 	if (lines.length > maxLines) {
 		shown.push(
-			theme.fg("muted", `... ${lines.length - maxLines} more diff lines`),
+			theme.fg("muted", `... (${lines.length - maxLines} more diff lines,`) +
+				` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`,
 		);
 	}
 	return shown.join("\n");
 }
 
-export function formatResultDiff(diff: string, theme: FgTheme): string {
-	return colorDiffLines(diff.split("\n"), theme).join("\n");
+export function formatResultDiff(
+	diff: string,
+	expanded: boolean,
+	theme: FgTheme,
+): string {
+	return formatPreviewDiff(diff, expanded, theme);
 }
 
 // ─── Edit call formatting ───────────────────────────────────────────────
@@ -147,6 +154,7 @@ export function buildAppliedChangedResultText(
 	_text: string | undefined,
 	details: HashlineEditToolDetails | undefined,
 	preview: EditPreview | undefined,
+	expanded: boolean,
 	theme: FgTheme,
 ): string | undefined {
 	const previewDiff =
@@ -154,7 +162,7 @@ export function buildAppliedChangedResultText(
 	const sections: string[] = [];
 
 	if (details?.diff && details.diff !== previewDiff) {
-		sections.push(formatResultDiff(details.diff, theme));
+		sections.push(formatResultDiff(details.diff, expanded, theme));
 	}
 
 	if (details?.warnings.length) {
