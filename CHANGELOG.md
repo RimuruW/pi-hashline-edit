@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ellipsis-tolerant `textHint` matching, and the prompt now recommends hints.** An anchor's `:content` hint that was truncated with `...` or `…` (e.g. `12#MQ: console.log(...)`) now validates by the prefix before the first ellipsis instead of failing the whole-line comparison, so hash-valid anchors are no longer falsely rejected as stale over an abbreviated hint. Ellipsis-leading hints carry no signal and never veto; "Did you mean" candidate scanning skips no-signal hints. The `edit` prompt now recommends keeping the `:content` suffix on high-risk anchors such as range endpoints — content cross-checking blocks hash collisions outright, which buys more safety per token than longer hashes.
+
+### Documentation
+
+- **FAQ corrected against code facts.** The hash-length answer now states what longer hashes do and do not buy (mirroring ADR 0006: only the silent false-accept rate drops; stale-anchor frequency is unchanged and visible errors can increase). The alphabet answer explains the real nibble-alignment rationale and drops the overstated "model never conflates anchors with code" claim (`HTTP`/`MQTT` fall inside the alphabet at lengths 3–4, which is exactly why shape alone is never trusted). The `textHint` answer documents both validation roles (questioning and forgiveness) and no longer attributes hint strategy to prompt instructions that did not exist. The `NIBBLE_STR` code comment no longer claims hex digits A–F are excluded (`B` is in the alphabet).
+
+### Infrastructure
+
+- grep spawn-failure tests now skip on machines without ripgrep, matching the rest of the grep suite.
+
 ### Fixed
 
 - **Edit diff rendering honors expansion state.** Preflight previews and settled result diffs now share a single 10-line collapsed limit, and expanding shows the complete diff. Previously previews were capped at 40 lines when expanded, while settled result diffs ignored expansion entirely and rendered unbounded. The truncation line uses Pi's native key-hint styling. TUI-only: result text and details sent to the model are unchanged (#31).

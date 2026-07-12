@@ -11,9 +11,14 @@ import { getHashLength } from "../config";
 
 /**
  * Custom 16-character hash alphabet. Deliberately excludes:
- * - Hex digits A–F (prevents confusion with hex literals in code)
+ * - Most hex digits: A, C, D, E, F (B is retained to reach 16 letters, so a
+ *   hash such as "BB" can still coincide with a hex byte)
  * - Visually confusable letters: D, G, I, L, O (look like digits 0, 6, 1, 1, 0)
  * - Common vowels A, E, I, O, U (prevents accidental English words)
+ *
+ * 16 characters means each hash character encodes exactly one nibble (4 bits),
+ * so an N-char hash is a direct read of the low 4·N bits of xxh32 — no base
+ * conversion, and the length↔entropy relationship stays obvious.
  *
  * At hash length 2 these properties hold unconditionally. At lengths 3–4, the
  * alphabet still avoids hex and visually confusing characters, but longer tokens
@@ -88,4 +93,39 @@ export function normalizeFuzzyLine(text: string): string {
 
 export function isFuzzyEquivalentLine(expected: string, actual: string): boolean {
 	return normalizeFuzzyLine(expected) === normalizeFuzzyLine(actual);
+}
+
+/** First ASCII "..." or Unicode "…" in a hint marks it as model-truncated content. */
+const ELLIPSIS_RE = /\.{3}|…/;
+
+/**
+ * Match a textHint against an actual file line for anchor validation.
+ *
+ * A full hint must be fuzzy-equivalent to the line. A hint containing an
+ * ellipsis is treated as truncated content copied by the model (e.g.
+ * "console.log(...)" for "console.log('hello world')"): only the
+ * fuzzy-normalized prefix before the first ellipsis must match the start of
+ * the line. An ellipsis-leading hint has an empty prefix and never vetoes.
+ */
+export function hintMatchesLine(hint: string, line: string): boolean {
+	const normalizedHint = normalizeFuzzyLine(hint);
+	const ellipsisIndex = normalizedHint.search(ELLIPSIS_RE);
+	if (ellipsisIndex === -1) {
+		return normalizedHint === normalizeFuzzyLine(line);
+	}
+	const prefix = normalizedHint.slice(0, ellipsisIndex);
+	return normalizeFuzzyLine(line).startsWith(prefix);
+}
+
+/**
+ * True when a hint can discriminate between lines: non-empty content before
+ * any ellipsis. No-signal hints (empty or ellipsis-leading) would match every
+ * line, so candidate scanning must skip them.
+ */
+export function hintHasSignal(hint: string): boolean {
+	const normalizedHint = normalizeFuzzyLine(hint);
+	const ellipsisIndex = normalizedHint.search(ELLIPSIS_RE);
+	const prefix =
+		ellipsisIndex === -1 ? normalizedHint : normalizedHint.slice(0, ellipsisIndex);
+	return prefix.length > 0;
 }

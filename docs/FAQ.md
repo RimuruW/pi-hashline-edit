@@ -2,11 +2,13 @@
 
 ### Why only 2 hash characters by default? Wouldn't longer hashes prevent collisions?
 
-Two characters (256 buckets) paired with line numbers is reliable for single-edit workflows. Longer hashes do reduce the chance of a false match when line numbers shift, but they increase token cost on every `read` line, which compounds fast in large files. Set `hashLength` to 3 or 4 if you need extra safety for complex concurrent edits. The trade-off, and the token budget, are yours.
+Hash length changes exactly one number: the probability that a *stale* anchor silently passes validation because the changed content at that line number coincidentally hashes to the same value — 2⁻⁸ per stale anchor at length 2, 2⁻¹⁶ at length 4. That path is already triple-guarded: hashes cover the whole 3-line window (ADR 0003), the line number is the primary key, and a `textHint` vetoes collisions outright when present. So the default spends 2 characters per read line, not 4.
+
+What longer hashes do *not* buy: they don't reduce `[E_STALE_ANCHOR]` frequency at all (staleness comes from the file changing, not from hash width), and they can surface *more* visible errors, because mis-copied or fabricated anchors that would have slipped through at 8 bits get rejected at 16. Set `hashLength` to 3 or 4 in `~/.pi/agent/hashline.json` if your workload leaves many stale anchors in flight and you want the false-accept floor lower — the extra token cost on every `read` line is yours. If you want more safety per token, prefer keeping the `:content` suffix on anchors (see `textHint` below): it costs tokens only at edit time and blocks collisions by content, not probability.
 
 ### Why a custom 16-character alphabet instead of Base64 or hex?
 
-Three reasons. First, we drop visually ambiguous pairs (0/O, 1/l/I) so humans can scan logs without squinting. Second, no vowels: a hash will never accidentally spell `for`, `let`, `if`, or any other real code token. Anchors and code text always look physically different, so the model never conflates them. Third, the 16-char set keeps hashes compact: two chars give 256 buckets, three give 4096, enough range without bloat.
+Sixteen characters means each hash character encodes exactly one nibble: an N-char hash is a direct read of the low 4·N bits of xxh32, with no base conversion and an obvious length↔entropy relationship. Within that budget the letters are chosen for legibility: no vowels (A, E, I, O, U), so short hashes can't spell English words, and none of the digit-lookalikes D, G, L, O, I. Most hex digits are also excluded so anchors rarely read as hex literals — though `B` survives to fill the set, and at lengths 3–4 real uppercase identifiers (`HTTP`, `MQTT`) fall entirely inside the alphabet. That is why nothing in the pipeline trusts shape alone: hash-shaped content is never rejected on shape, and dedicated guards (the `[E_INVALID_PATCH]` display-prefix check, the bare-`HH:` warning) handle the cases where a model confuses rendered anchors with file content.
 
 ### What happens with repeated lines — blank lines, repeated JSON, identical braces?
 
@@ -30,7 +32,9 @@ Asking the model to track state adds failure modes: it can fabricate, misuse, or
 
 ### What is `textHint` (e.g. `11#KT: console.log(...)`) and why is it optional?
 
-`textHint` is an optional second factor. When an anchor's hash matches but the line number shifted (the 1/256 false-accept case), the runtime cross-checks the hint text against the actual file line. A mismatch catches the false accept before any edit touches the file. It is optional so the model can decide: pure hash when token budget is tight, hash+text when safety matters more. The model's own prompt instructions determine the strategy.
+When an anchor keeps the `:content` suffix from read output, that content becomes a second factor with two roles. *Questioning*: if the hash matches but the content clearly isn't what's on that line — the 1/256 case where the file changed and the new 3-line window collides into the same hash — the anchor is treated as stale, closing the silent-collision path outright. *Forgiveness*: if the hash mismatches only because the line drifted in whitespace or Unicode punctuation, a hint that still validates in the current context rescues the edit, with a warning. Truncated hints are understood: `console.log(...)` matches by the prefix before the ellipsis.
+
+It is optional because it rides on copying behavior the model already has: anchors work bare (`12#MQ`), and the hint engages whenever the full rendered line is copied instead. The tool prompt recommends keeping the content for high-risk anchors such as range endpoints — the cost is that line's tokens at edit time, which buys more safety than paying for longer hashes on every read line.
 
 ### Why is `grep` off by default?
 

@@ -389,7 +389,9 @@ vi.mock("child_process", async (importOriginal) => {
 	return { ...original, spawn: vi.fn(original.spawn) };
 });
 
-describe("runRg spawn failure", () => {
+// Skipped without ripgrep like the main block: registerGrepTool refuses to
+// register the tool when rg is absent, so getTool("grep") cannot succeed.
+describe.skipIf(!rgAvailable)("runRg spawn failure", () => {
 	afterEach(() => {
 		vi.mocked(spawn).mockRestore();
 	});

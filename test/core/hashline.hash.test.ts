@@ -169,6 +169,56 @@ describe("textHint dual role", () => {
 		// Must throw stale anchor — if someone reverts questioning logic, this breaks
 		expect(() => applyHashlineEdits(content, [edit])).toThrow(/stale anchor/);
 	});
+
+	it("accepts anchor when hash matches and textHint is ellipsis-truncated but the prefix matches", () => {
+		// Models abbreviate copied content: "console.log('hello world')" becomes
+		// "console.log(...)". Only the prefix before the first ellipsis must match.
+		const fileLines = ["alpha", "console.log('hello world')", "gamma"];
+		const content = fileLines.join("\n");
+		const hash = computeLineHash(fileLines, 1);
+		const edit: HashlineEdit = {
+			op: "replace",
+			pos: { line: 2, hash, textHint: "console.log(...)" },
+			lines: ["NEW"],
+		};
+		expect(() => applyHashlineEdits(content, [edit])).not.toThrow();
+	});
+
+	it("accepts anchor with Unicode-ellipsis-truncated textHint", () => {
+		const fileLines = ["alpha", "console.log('hello world')", "gamma"];
+		const content = fileLines.join("\n");
+		const hash = computeLineHash(fileLines, 1);
+		const edit: HashlineEdit = {
+			op: "replace",
+			pos: { line: 2, hash, textHint: "console.log(…" },
+			lines: ["NEW"],
+		};
+		expect(() => applyHashlineEdits(content, [edit])).not.toThrow();
+	});
+
+	it("QUESTIONING: still rejects when the ellipsis-truncated prefix disagrees with the actual line", () => {
+		const fileLines = ["alpha", "console.log('hello world')", "gamma"];
+		const content = fileLines.join("\n");
+		const hash = computeLineHash(fileLines, 1);
+		const edit: HashlineEdit = {
+			op: "replace",
+			pos: { line: 2, hash, textHint: "fetchData(...)" },
+			lines: ["NEW"],
+		};
+		expect(() => applyHashlineEdits(content, [edit])).toThrow(/stale anchor/);
+	});
+
+	it("treats an ellipsis-leading textHint as carrying no signal (never vetoes)", () => {
+		const fileLines = ["alpha", "beta", "gamma"];
+		const content = fileLines.join("\n");
+		const hash = computeLineHash(fileLines, 1);
+		const edit: HashlineEdit = {
+			op: "replace",
+			pos: { line: 2, hash, textHint: "...('hello world')" },
+			lines: ["NEW"],
+		};
+		expect(() => applyHashlineEdits(content, [edit])).not.toThrow();
+	});
 });
 
 describe("read with offset/limit produces same hashes as full read", () => {

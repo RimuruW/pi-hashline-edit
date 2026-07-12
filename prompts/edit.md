@@ -23,4 +23,5 @@ Example — single-line and span replace in one call:
 Rules:
 - `lines` is literal file content with exact indentation. Never include `LINE#HASH:` or bare `HH:` prefixes, diff `+`/`-` markers, or a copy of a neighboring line — the `:content` part of an anchor is context for you, not payload, and repeating a boundary line duplicates it in the file.
 - Anchors are opaque: copy them exactly, never compute, shift, or guess one.
+- An anchor may keep the `:content` suffix from read output (`"12#MQ: const x = 1;"`). The runtime cross-checks that content against the file — catching hash collisions and recovering whitespace-only drift — so keep it for high-risk anchors such as range endpoints. Copy the content as rendered; if you shorten it, keep the start of the line and mark the cut with `...`.
 - Edits in one call must not overlap or touch adjacent lines — merge such changes into a single edit.

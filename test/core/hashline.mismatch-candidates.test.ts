@@ -196,6 +196,55 @@ describe("formatMismatchError — Did you mean candidates", () => {
 		expect(errorMessage).toContain("similar lines found");
 	});
 
+	it("finds candidates for an ellipsis-truncated textHint by prefix match", () => {
+		const originalContent = [
+			"line1",
+			"console.log('hello world')",
+			"line3",
+		].join("\n");
+		const currentContent = [
+			"line1",
+			"something else",
+			"line3",
+			"line4",
+			"console.log('hello world')",
+		].join("\n");
+
+		const staleAnchor = makeStaleAnchorWithHint(originalContent, 2, "console.log(...)");
+		const edits = [{ op: "replace" as const, pos: staleAnchor, lines: ["replaced"] }];
+
+		let errorMessage: string | undefined;
+		try {
+			applyHashlineEdits(currentContent, edits);
+		} catch (e) {
+			errorMessage = (e as Error).message;
+		}
+
+		expect(errorMessage).toBeDefined();
+		expect(errorMessage).toContain("Did you mean");
+		const currentLines = currentContent.split("\n");
+		const freshHash = computeLineHash(currentLines, 4);
+		expect(errorMessage).toContain(`5#${freshHash}:console.log('hello world')`);
+	});
+
+	it("skips candidate scanning for a no-signal (ellipsis-leading) textHint", () => {
+		const originalContent = ["line1", "target line", "line3"].join("\n");
+		const currentContent = ["line1", "changed", "line3", "line4"].join("\n");
+
+		const staleAnchor = makeStaleAnchorWithHint(originalContent, 2, "...");
+		const edits = [{ op: "replace" as const, pos: staleAnchor, lines: ["replaced"] }];
+
+		let errorMessage: string | undefined;
+		try {
+			applyHashlineEdits(currentContent, edits);
+		} catch (e) {
+			errorMessage = (e as Error).message;
+		}
+
+		expect(errorMessage).toBeDefined();
+		expect(errorMessage).not.toContain("Did you mean");
+	});
+
 	it("AC3: no textHint → no Did you mean section, existing format unchanged", () => {
 		const content = "aaa\nbbb\nccc";
 		const edits = [{ op: "replace" as const, pos: { line: 2, hash: "XX" }, lines: ["B"] }];

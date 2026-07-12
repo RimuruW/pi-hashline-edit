@@ -11,6 +11,8 @@ import {
 	normalizeHashInput,
 	computeHashFromContext,
 	isFuzzyEquivalentLine,
+	hintMatchesLine,
+	hintHasSignal,
 } from "./hash";
 import {
 	getHashlineBarePrefixRe,
@@ -59,7 +61,10 @@ function formatMismatchError(
 
 	// Scan for fuzzy-match candidates for stale anchors that carry a textHint.
 	// Runs only on the error path after all mismatches are collected (O(n×mismatches), acceptable).
-	const hintedMismatches = mismatches.filter((m) => m.textHint !== undefined);
+	// No-signal hints (empty / ellipsis-leading) would match every line — skip them.
+	const hintedMismatches = mismatches.filter(
+		(m) => m.textHint !== undefined && hintHasSignal(m.textHint),
+	);
 	if (hintedMismatches.length > 0) {
 		// Per-anchor candidate lists: 1-based line numbers outside the display window.
 		type AnchorCandidates =
@@ -74,7 +79,7 @@ function formatMismatchError(
 			const hint = m.textHint!;
 			const matches: number[] = [];
 			for (let i = 0; i < fileLines.length; i++) {
-				if (isFuzzyEquivalentLine(hint, fileLines[i]!)) {
+				if (hintMatchesLine(hint, fileLines[i]!)) {
 					matches.push(i + 1);
 				}
 			}
@@ -650,7 +655,8 @@ function validateAnchorEdits(
 			// QUESTIONING: hash matches but textHint says otherwise → treat as stale (anti-collision guard).
 			// Guards the 1/256 collision case: a model that copied "LINE#HASH:content" gets the content
 			// cross-checked for free. If the hint clearly differs from the actual line, the anchor is stale.
-			if (ref.textHint !== undefined && !isFuzzyEquivalentLine(ref.textHint, line)) {
+			// Ellipsis-truncated hints ("console.log(...)") compare by prefix — see hintMatchesLine.
+			if (ref.textHint !== undefined && !hintMatchesLine(ref.textHint, line)) {
 				mismatches.push({ line: ref.line, expected: ref.hash, actual, textHint: ref.textHint });
 				return false;
 			}
