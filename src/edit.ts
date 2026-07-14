@@ -183,6 +183,19 @@ export type EditRequestParams = {
 	edits: HashlineToolEdit[];
 };
 
+type EditPipelineResult = {
+	path: string;
+	originalNormalized: string;
+	result: string;
+	bom: string;
+	originalEnding: "\r\n" | "\n";
+	hadUtf8DecodeErrors: boolean;
+	warnings: string[];
+	noopEdits?: { editIndex: number; loc: string; currentContent: string }[];
+	firstChangedLine?: number;
+	lastChangedLine?: number;
+};
+
 const EDIT_DESC = loadPrompt(new URL("../prompts/edit.md", import.meta.url)).trim();
 
 const EDIT_PROMPT_SNIPPET = loadPrompt(
@@ -250,18 +263,7 @@ async function executeEditPipeline(
 	accessMode: number,
 	signal?: AbortSignal,
 	resolvedPath?: string,
-): Promise<{
-	path: string;
-	originalNormalized: string;
-	result: string;
-	bom: string;
-	originalEnding: "\r\n" | "\n";
-	hadUtf8DecodeErrors: boolean;
-	warnings: string[];
-	noopEdits?: { editIndex: number; loc: string; currentContent: string }[];
-	firstChangedLine?: number;
-	lastChangedLine?: number;
-}> {
+): Promise<EditPipelineResult> {
 	const path = params.path;
 	const absolutePath = resolvedPath ?? resolveToCwd(path, cwd);
 	const toolEdits = params.edits;
@@ -315,6 +317,32 @@ async function executeEditPipeline(
 	const resolved = resolveEditAnchors(toolEdits);
 
 	const extraWarnings: string[] = [];
+
+	// Both the direct-apply and snapshot-recovery paths return the same shape,
+	// differing only in the applied content, its per-result warnings, and the
+	// changed-line range. Build the common envelope once.
+	const buildResult = (parts: {
+		result: string;
+		resultWarnings?: string[];
+		noopEdits?: EditPipelineResult["noopEdits"];
+		firstChangedLine?: number;
+		lastChangedLine?: number;
+	}): EditPipelineResult => ({
+		path,
+		originalNormalized,
+		result: parts.result,
+		bom,
+		originalEnding,
+		hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
+		warnings: [
+			...(mixedEndingWarning ? [mixedEndingWarning] : []),
+			...extraWarnings,
+			...(parts.resultWarnings ?? []),
+		],
+		noopEdits: parts.noopEdits,
+		firstChangedLine: parts.firstChangedLine,
+		lastChangedLine: parts.lastChangedLine,
+	});
 
 	// Attempt to apply the edits directly. On E_STALE_ANCHOR, fall through to
 	// the multi-version snapshot recovery block below.
@@ -383,22 +411,13 @@ async function executeEditPipeline(
 			);
 
 			// Recovery succeeded: return the merged result.
-			return {
-				path,
-				originalNormalized,
+			return buildResult({
 				result: merged,
-				bom,
-				originalEnding,
-				hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
-				warnings: [
-					...(mixedEndingWarning ? [mixedEndingWarning] : []),
-					...extraWarnings,
-					...(snapshotResult.warnings ?? []),
-				],
+				resultWarnings: snapshotResult.warnings,
 				noopEdits: snapshotResult.noopEdits,
 				firstChangedLine: mergedRange?.firstChangedLine,
 				lastChangedLine: mergedRange?.lastChangedLine,
-			};
+			});
 		}
 
 		// All versions exhausted without a successful merge.
@@ -416,22 +435,13 @@ async function executeEditPipeline(
 
 	// Direct apply succeeded.
 	const anchorResult = directResult!;
-	return {
-		path,
-		originalNormalized,
+	return buildResult({
 		result: anchorResult.content,
-		bom,
-		originalEnding,
-		hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
-		warnings: [
-			...(mixedEndingWarning ? [mixedEndingWarning] : []),
-			...extraWarnings,
-			...(anchorResult.warnings ?? []),
-		],
+		resultWarnings: anchorResult.warnings,
 		noopEdits: anchorResult.noopEdits,
 		firstChangedLine: anchorResult.firstChangedLine,
 		lastChangedLine: anchorResult.lastChangedLine,
-	};
+	});
 }
 
 export async function computeEditPreview(
@@ -694,8 +704,10 @@ function buildEditToolDefinition(): EditToolDefinition {
 			);
 
 			if (originalNormalized === result) {
-				const payloadKey = JSON.stringify(normalizedParams.edits);
-				const { count, escalate } = recordNoopEdit(mutationTargetPath, payloadKey);
+				const { count, escalate } = recordNoopEdit(
+					mutationTargetPath,
+					appliedPayloadKey,
+				);
 				if (escalate) {
 					throw new Error(
 						`[E_NOOP_LOOP] Edit to ${path} was a byte-identical no-op ${count} times in a row. STOP re-sending this payload. Re-read the file — the content you are trying to write already exists, or your anchors point at the wrong lines.`,

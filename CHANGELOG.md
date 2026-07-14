@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.3] - 2026-07-14
 
 ### Added
 
@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Infrastructure
 
 - grep spawn-failure tests now skip on machines without ripgrep, matching the rest of the grep suite.
+- The edit pipeline's direct-apply and snapshot-recovery paths now build their result through a single shared envelope, removing duplicated return construction in `src/edit.ts`. No behavior change.
 
 ### Fixed
 
